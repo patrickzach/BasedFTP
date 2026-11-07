@@ -1,6 +1,14 @@
 # BasedFTP
 
-A native macOS SFTP application built with SwiftUI and AppKit, requiring macOS 14 or later. No package dependencies, accounts, advertising, or telemetry. The current release is a usable first version, not yet a thoroughly hardened 1.0.
+**Your server files. Right at home on your Mac.**
+
+BasedFTP is a free, open-source SFTP client for macOS. Browse local and remote files side by side, drag and drop to transfer, and edit server files in your favorite editor—with automatic uploads when you save. Native Mac feel. No accounts, ads, or telemetry.
+
+**[Download for Mac](https://github.com/patrickzach/BasedFTP/releases)** · [Visit the website](https://patrickzach.github.io/BasedFTP/)
+
+![BasedFTP for macOS showing local and remote file browsing side by side, saved servers, and the transfer queue](Resources/Screenshots/basedftp-app.webp)
+
+Requires macOS 14 or later. Universal app for Apple Silicon and Intel. Built with SwiftUI and AppKit, without external package dependencies. This is an early release; see the validation notes and limitations below.
 
 Features and improvements are documented in the [Changelog](CHANGELOG.md).
 

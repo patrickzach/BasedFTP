@@ -6,6 +6,8 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- README introduction with an app screenshot and direct download and website links.
+
 - GNU GPLv3-only project license, licensing documentation, and inclusion of the license in app bundles built through the script or Xcode.
 
 - Prebuilt landing page in `docs/index.html` and a GitHub Actions workflow for GitHub Pages deployment, with setup and update instructions.
