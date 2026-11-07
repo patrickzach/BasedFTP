@@ -10,7 +10,7 @@ BasedFTP is a free, open-source SFTP client for macOS, with FTP file transfers t
 
 Requires macOS 14 or later. Universal app for Apple Silicon and Intel. Built with SwiftUI and AppKit, without external package dependencies. This is an early release; see the validation notes and limitations below.
 
-Features and improvements are documented in the [Changelog](CHANGELOG.md).
+Features and improvements are documented in the [Changelog](CHANGELOG.md). For a quick map of the source files, key functions, and execution paths, see the [Developer guide](DEVELOPMENT.md).
 
 ## Interface language
 

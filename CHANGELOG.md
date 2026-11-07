@@ -6,6 +6,8 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- Compact developer guide covering source files, key functions, common execution paths, extension points, and build/test tooling.
+
 - FTP upload/download of individual regular files through the shared parallel transfer queue, with byte/file progress, speed/ETA, pause, cancellation, retry, and explicit upload/download resumption.
 - System-libcurl API binding with a small typed C adapter; transfer credentials remain in memory and progress comes from callbacks rather than CLI text. Universal builds link the system library without bundling a dependency.
 - Staged FTP uploads committed using RNFR/RNTO, Skip/Rename/Overwrite conflicts, and retention of old destinations on failed uploads or rejected commits. No delete fallback is used; FTP atomicity and concurrent-client limitations are documented.
