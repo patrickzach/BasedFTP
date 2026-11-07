@@ -18,6 +18,9 @@ for source in sources:
 iconRef=obj('iconref', 'isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = SOURCE_ROOT;')
 iconBuild=obj('iconbuild', f'isa = PBXBuildFile; fileRef = {iconRef};')
 refs.append(iconRef)
+licenseRef=obj('licenseref', 'isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT;')
+licenseBuild=obj('licensebuild', f'isa = PBXBuildFile; fileRef = {licenseRef};')
+refs.append(licenseRef)
 testRefs=[]; testBuilds=[]
 for source in sorted((root/'Tests/BasedFTPTests').glob('*.swift')):
     rel=str(source.relative_to(root))
@@ -31,7 +34,7 @@ products=obj('products', f'isa = PBXGroup; children = ({product},{testProduct},)
 group=obj('group', f'isa = PBXGroup; children = ({",".join(refs)},{testGroup},{products},); sourceTree = "<group>";')
 sourcesPhase=obj('sourcesphase', f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(builds)},); runOnlyForDeploymentPostprocessing = 0;')
 frameworks=obj('frameworks','isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
-resources=obj('resources',f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({iconBuild},); runOnlyForDeploymentPostprocessing = 0;')
+resources=obj('resources',f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({iconBuild},{licenseBuild},); runOnlyForDeploymentPostprocessing = 0;')
 configs=[]; projectConfigs=[]
 for mode in ['Debug','Release']:
     settings='ARCHS = "arm64 x86_64"; ONLY_ACTIVE_ARCH = NO; CODE_SIGN_STYLE = Automatic; CODE_SIGN_IDENTITY = "-"; COMBINE_HIDPI_IMAGES = YES; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools"; INFOPLIST_KEY_CFBundleDisplayName = BasedFTP; INFOPLIST_KEY_CFBundleDevelopmentRegion = en; INFOPLIST_KEY_CFBundleIconFile = AppIcon; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; PRODUCT_BUNDLE_IDENTIFIER = app.basedftp.client; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SWIFT_EMIT_LOC_STRINGS = YES;'

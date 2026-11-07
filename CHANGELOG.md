@@ -6,6 +6,8 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- GNU GPLv3-only project license, licensing documentation, and inclusion of the license in app bundles built through the script or Xcode.
+
 - Prebuilt landing page in `docs/index.html` and a GitHub Actions workflow for GitHub Pages deployment, with setup and update instructions.
 
 - Universal app for Apple Silicon (`arm64`) and Intel (`x86_64`), requiring macOS 14 or later. The build script compiles both variants separately, combines them using `lipo`, and signs/verifies the combined bundle. The Xcode project is also configured for both architectures.

@@ -98,3 +98,13 @@ The prebuilt landing page lives in `docs/index.html`. It includes its styles and
 3. The default site address is https://patrickzach.github.io/BasedFTP/.
 
 To update the page, replace `docs/index.html` with a fresh export from the landing-page project, commit, and push. The workflow uploads only `docs/`, not app sources or build artifacts.
+
+## License
+
+Copyright (C) 2026 Patrick Zach.
+
+BasedFTP is licensed under the **GNU General Public License, version 3 only** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.
+
+You may use, modify, redistribute, and sell the software. When distributing modified versions or binaries, you must comply with GPLv3, including providing the corresponding source code under GPLv3. Private modifications do not require publication. The software is provided without warranty, to the extent permitted by applicable law.
+
+When distributing an app build, include this license and make the corresponding source for that exact build available in a GPLv3-compliant manner. A link to a changing branch alone is not a substitute for the corresponding source of the distributed version.

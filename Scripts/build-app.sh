@@ -23,6 +23,7 @@ done
 APP="$PWD/build/BasedFTP.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 # Replace the executable inode so an already-running app retains its old mapping.
 cp "$UNIVERSAL_ROOT/BasedFTP.universal" "$APP/Contents/MacOS/BasedFTP.new"
 mv -f "$APP/Contents/MacOS/BasedFTP.new" "$APP/Contents/MacOS/BasedFTP"
