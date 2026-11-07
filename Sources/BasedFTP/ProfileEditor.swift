@@ -16,31 +16,45 @@ struct ProfileEditor: View {
     @State private var trust: HostCandidate?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Label("SSH Connection", systemImage: "server.rack").font(.title2.bold())
+            Label("Server Connection", systemImage: "server.rack").font(.title2.bold())
             Form {
+                Picker("Protocol", selection: $profile.transport) {
+                    ForEach(ServerProtocol.allCases) { Text($0.title).tag($0) }
+                }.onChange(of: profile.transport) { _, _ in
+                    password = ""; passphrase = ""; savePassword = false; savePassphrase = false; result = nil
+                }
                 TextField("Name", text: $profile.name)
-                TextField("Host / SSH Alias", text: $profile.host)
-                TextField("Username (blank: SSH configuration)", text: $profile.user)
-                TextField("Port (blank: SSH configuration)", text: $profile.port)
+                TextField(profile.transport == .sftp ? "Host / SSH Alias" : "Host", text: $profile.host)
+                TextField(profile.transport == .sftp ? "Username (blank: SSH configuration)" : "Username", text: $profile.user)
+                TextField(profile.transport == .sftp ? "Port (blank: SSH configuration)" : "Port (default: 21)", text: $profile.port)
                 TextField("Initial Directory", text: $profile.initialPath)
-                HStack {
-                    TextField("SSH Key (optional)", text: $profile.keyPath)
-                    Button("Choose…") {
-                        let panel = NSOpenPanel(); panel.showsHiddenFiles = true; panel.canChooseDirectories = false
-                        if panel.runModal() == .OK { profile.keyPath = panel.url?.path ?? "" }
+                if profile.transport == .sftp {
+                    HStack {
+                        TextField("SSH Key (optional)", text: $profile.keyPath)
+                        Button("Choose…") {
+                            let panel = NSOpenPanel(); panel.showsHiddenFiles = true; panel.canChooseDirectories = false
+                            if panel.runModal() == .OK { profile.keyPath = panel.url?.path ?? "" }
+                        }
                     }
                 }
                 SecureField("Password", text: $password).onChange(of: password) { _, value in if !value.isEmpty { savePassword = true } }
                 Toggle("Replace password in Keychain", isOn: $savePassword)
-                SecureField("Key Passphrase", text: $passphrase).onChange(of: passphrase) { _, value in if !value.isEmpty { savePassphrase = true } }
-                Toggle("Replace passphrase in Keychain", isOn: $savePassphrase)
+                if profile.transport == .sftp {
+                    SecureField("Key Passphrase", text: $passphrase).onChange(of: passphrase) { _, value in if !value.isEmpty { savePassphrase = true } }
+                    Toggle("Replace passphrase in Keychain", isOn: $savePassphrase)
+                }
                 Toggle("Favorite", isOn: $profile.favorite)
                 Toggle("Save server profile", isOn: $remember)
             }.textFieldStyle(.roundedBorder)
-            Text("SSH agent and ~/.ssh/config are used automatically. Credentials are stored in macOS Keychain. Empty fields only change stored credentials when the replace option is enabled.").font(.caption).foregroundStyle(.secondary)
+            if profile.transport == .sftp {
+                Text("SSH agent and ~/.ssh/config are used automatically. Credentials are stored in macOS Keychain. Empty fields only change stored credentials when the replace option is enabled.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("FTP sends your password and directory listings without encryption. Use SFTP for secure connections. FTPS is not implemented yet.").font(.caption).foregroundStyle(.orange)
+                Text(ServerProtocol.ftpBrowsingNotice + " Passwords are stored separately in macOS Keychain; leave the field empty to use a stored password.").font(.caption).foregroundStyle(.secondary)
+            }
             if let result { Text(result).font(.caption).textSelection(.enabled).frame(maxHeight: 100).fixedSize(horizontal: false, vertical: true) }
             HStack {
-                Button("Verify Host Key…") { scan() }
+                if profile.transport == .sftp { Button("Verify Host Key…") { scan() } }
                 Button("Test Connection") { test() }
                 if busy { ProgressView().controlSize(.small) }
                 Spacer()
@@ -55,9 +69,9 @@ struct ProfileEditor: View {
     private func save() -> Bool {
         do {
             try profile.validate()
-            guard password.isEmpty || savePassword, passphrase.isEmpty || savePassphrase else { throw FTPError.message("Enable the Keychain option for password authentication, or use an SSH key or SSH agent.") }
-            if savePassword { try CredentialStore.save(password, profile: profile.id, purpose: "password") }
-            if savePassphrase { try CredentialStore.save(passphrase, profile: profile.id, purpose: "passphrase") }
+            guard password.isEmpty || savePassword, profile.transport != .sftp || passphrase.isEmpty || savePassphrase else { throw FTPError.message("Enable the Keychain option to use the entered credentials.") }
+            if savePassword { try CredentialStore.save(password, profile: profile.id, purpose: profile.passwordPurpose) }
+            if profile.transport == .sftp && savePassphrase { try CredentialStore.save(passphrase, profile: profile.id, purpose: "passphrase") }
             if remember { store.save(profile) }; return true
         } catch { result = error.localizedDescription; return false }
     }
@@ -65,8 +79,8 @@ struct ProfileEditor: View {
         guard save() else { return }; busy = true; let p = profile
         Task {
             do {
-                let path = try await Task.detached { let c = try RemoteFileSystems.connect(profile: p); defer { c.close() }; return try c.realpath(p.initialPath) }.value
-                result = "SSH authentication and SFTP succeeded. Directory: \(path)"
+                let path = try await Task.detached { let c = try RemoteFileSystems.connect(profile: p); defer { c.close() }; let path = try c.realpath(p.initialPath); _ = try c.list(path); return path }.value
+                result = "\(p.transport == .sftp ? "SSH authentication and SFTP" : "FTP login and passive directory listing") succeeded. Directory: \(path)"
             } catch { result = error.localizedDescription }
             busy = false
         }
@@ -102,6 +116,7 @@ enum HostTrust {
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
     static func scan(_ profile: ServerProfile) throws -> HostCandidate {
+        guard profile.transport == .sftp else { throw FTPError.message("Host-key verification applies only to SFTP connections.") }
         // Resolve aliases using the same OpenSSH config engine as actual connections.
         var arguments = ["-G"]
         if !profile.port.isEmpty { arguments += ["-p", profile.port] }

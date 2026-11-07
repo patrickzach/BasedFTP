@@ -6,6 +6,10 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- FTP browsing through system curl/libcurl: username/password login, custom ports, passive EPSV/PASV directory listings, UTF-8 MLSD metadata, folder-tree navigation, and cancellation.
+- SFTP/FTP protocol selection, backward-compatible SFTP profile decoding, separate FTP Keychain passwords, and visible unencrypted/browsing-only notices. FTP transfers, mutations, drag/drop, and remote editing are disabled pending later steps; local file operations remain available.
+- MLSD/parser, profile migration, URL/configuration safety, and browsing-only gate tests, plus isolated real pyftpdlib FTP servers testing EPSV, PASV fallback, foreign PASV-address rejection, authentication/access errors, unsupported MLSD, and cancellation.
+
 - README introduction with an app screenshot and direct download and website links.
 
 - GNU GPLv3-only project license, licensing documentation, and inclusion of the license in app bundles built through the script or Xcode.

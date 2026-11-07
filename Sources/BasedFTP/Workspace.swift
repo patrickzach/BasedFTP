@@ -40,6 +40,7 @@ struct BookmarkActivationGate {
     let queue = TransferQueue()
     let edits = RemoteEditManager()
     var tab: ConnectionTab? { tabs.first { $0.id == selected } }
+    var supportsTransfers: Bool { tab?.profile.transport.supportsTransfers ?? false }
     var activePane: PaneModel? { activeRemote ? tab?.remote : tab?.local }
     init() {
         edits.onUploaded = { [weak self] profile, _ in
@@ -63,6 +64,7 @@ struct BookmarkActivationGate {
     func closeSelectedTab() { if let tab { close(tab) } }
     func transfer(from pane: PaneModel, entries: [FileEntry]? = nil) {
         guard let tab else { return }
+        guard supportsTransfers else { pane.error = ServerProtocol.ftpBrowsingNotice; return }
         queue.enqueue(entries ?? pane.selected, profile: tab.profile, destination: pane.remote ? tab.local.path : tab.remote.path, upload: !pane.remote)
     }
     func drop(_ strings: [String], to pane: PaneModel, directory: String? = nil) -> Bool {
@@ -82,11 +84,16 @@ struct BookmarkActivationGate {
             let sourcePane = remote ? tab.remote : tab.local
             let entries = PaneModel.topLevelSelection(sourcePane.allEntries.filter { paths.contains($0.path) })
             guard !entries.isEmpty else { continue }
-            if remote == pane.remote { pane.move(entries, to: destination) }
-            else { queue.enqueue(entries, profile: tab.profile, destination: destination, upload: pane.remote) }
+            if remote == pane.remote {
+                guard pane.supportsMutations else { continue }
+                pane.move(entries, to: destination)
+            } else {
+                guard tab.profile.transport.supportsTransfers else { continue }
+                queue.enqueue(entries, profile: tab.profile, destination: destination, upload: pane.remote)
+            }
             accepted = true
         }
-        if !external.isEmpty {
+        if !external.isEmpty && tab.profile.transport.supportsTransfers {
             queue.enqueue(Array(external.values), profile: tab.profile, destination: destination, upload: true)
             accepted = true
         }
@@ -155,7 +162,7 @@ struct RootView: View {
                 } else {
                     ContentUnavailableView {
                         Label("Your files. Everywhere.", systemImage: "externaldrive.connected.to.line.below")
-                    } description: { Text("Choose a server or add an SSH connection.") } actions: {
+                    } description: { Text("Choose a server or add an SFTP or FTP connection.") } actions: {
                         Button("Add Server…") { editing = ServerProfile() }.buttonStyle(.borderedProminent)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     RemoteEditsView(manager: workspace.edits)
@@ -168,7 +175,7 @@ struct RootView: View {
             ToolbarItemGroup {
                 Button { editing = ServerProfile() } label: { Label("New Connection", systemImage: "plus") }.keyboardShortcut("n")
                 Button { workspace.activePane?.refresh() } label: { Label("Refresh", systemImage: "arrow.clockwise") }.keyboardShortcut("r").disabled(workspace.tab == nil)
-                Button { if let pane = workspace.activePane { workspace.transfer(from: pane) } } label: { Label("Transfer", systemImage: "arrow.left.arrow.right") }.keyboardShortcut("t").disabled(workspace.activePane?.selected.isEmpty ?? true)
+                Button { if let pane = workspace.activePane { workspace.transfer(from: pane) } } label: { Label("Transfer", systemImage: "arrow.left.arrow.right") }.keyboardShortcut("t").disabled(!workspace.supportsTransfers || (workspace.activePane?.selected.isEmpty ?? true))
                 Button { workspace.showTransfers.toggle() } label: { Label("Transfers", systemImage: "list.bullet.rectangle") }
             }
         }
@@ -206,10 +213,10 @@ struct AppCommands: Commands {
                 .disabled(profiles == nil)
         }
         CommandMenu("Files") {
-            Button("Transfer") { if let w = workspace, let p = w.activePane { w.transfer(from: p) } }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: [])
-            Button("New Folder…") { NotificationCenter.default.post(name: .paneCommand, object: "folder") }.keyboardShortcut("n", modifiers: [.command, .shift])
-            Button("Rename…") { NotificationCenter.default.post(name: .paneCommand, object: "rename") }.keyboardShortcut("\r", modifiers: .command)
-            Button("Delete…") { NotificationCenter.default.post(name: .paneCommand, object: "delete") }.keyboardShortcut(.delete, modifiers: .command)
+            Button("Transfer") { if let w = workspace, let p = w.activePane { w.transfer(from: p) } }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: []).disabled(!(workspace?.supportsTransfers ?? false))
+            Button("New Folder…") { NotificationCenter.default.post(name: .paneCommand, object: "folder") }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!(workspace?.activePane?.supportsMutations ?? false))
+            Button("Rename…") { NotificationCenter.default.post(name: .paneCommand, object: "rename") }.keyboardShortcut("\r", modifiers: .command).disabled(!(workspace?.activePane?.supportsMutations ?? false))
+            Button("Delete…") { NotificationCenter.default.post(name: .paneCommand, object: "delete") }.keyboardShortcut(.delete, modifiers: .command).disabled(!(workspace?.activePane?.supportsMutations ?? false))
             Button("Enclosing Folder") { workspace?.activePane?.up() }.keyboardShortcut(.upArrow, modifiers: .command)
             Button("Back") { workspace?.activePane?.back() }.keyboardShortcut("[", modifiers: .command)
             Button("Forward") { workspace?.activePane?.forward() }.keyboardShortcut("]", modifiers: .command)

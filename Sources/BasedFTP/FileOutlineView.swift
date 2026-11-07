@@ -155,7 +155,7 @@ struct FileOutlineView: NSViewRepresentable {
             parent.open(node.entry)
         }
         func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-            guard let node = item as? Node else { return nil }
+            guard !parent.pane.remote || parent.workspace.supportsTransfers, let node = item as? Node else { return nil }
             let entries = parent.pane.selection.contains(node.entry.path) ? parent.pane.selected : [node.entry]
             let payload = DragPayload(tab: parent.tabID, remote: parent.pane.remote, entries: entries.map { .init(path: $0.path) })
             let item = NSPasteboardItem(); item.setString(payload.text, forType: .string); return item
@@ -168,7 +168,7 @@ struct FileOutlineView: NSViewRepresentable {
             return (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?.map(\.absoluteString) ?? []
         }
         func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
-            guard !parent.pane.busy else { return [] }
+            guard !parent.pane.busy, !parent.pane.remote || parent.workspace.supportsTransfers else { return [] }
             let strings = droppedStrings(info); guard !strings.isEmpty else { return [] }
             if let node = item as? Node {
                 guard node.entry.isDirectory else { return [] }
@@ -184,7 +184,7 @@ struct FileOutlineView: NSViewRepresentable {
                     return .move
                 }
             }
-            return .copy
+            return parent.workspace.supportsTransfers ? .copy : []
         }
         func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
             parent.workspace.drop(droppedStrings(info), to: parent.pane, directory: (item as? Node)?.entry.path ?? parent.pane.path)
@@ -198,22 +198,22 @@ struct FileOutlineView: NSViewRepresentable {
                 item.target = handler; item.representedObject = handler; item.isEnabled = enabled; menu.addItem(item)
             }
             menu.autoenablesItems = false
-            add(parent.pane.remote ? "Download" : "Upload", enabled: !entries.isEmpty) { self.parent.workspace.transfer(from: self.parent.pane) }
+            add(parent.pane.remote ? "Download" : "Upload", enabled: !entries.isEmpty && parent.workspace.supportsTransfers) { self.parent.workspace.transfer(from: self.parent.pane) }
             if entries.count == 1, let entry = entries.first {
-                add(entry.isDirectory ? "Open" : self.parent.pane.remote ? "Edit Remote File" : "Open") { self.parent.open(entry) }
-                if entry.isRegular {
+                add(entry.isDirectory ? "Open" : self.parent.pane.remote ? "Edit Remote File" : "Open", enabled: entry.isDirectory || !parent.pane.remote || parent.workspace.supportsTransfers) { self.parent.open(entry) }
+                if entry.isRegular && (!parent.pane.remote || parent.workspace.supportsTransfers) {
                     let item = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
                     item.submenu = EditorApplications.menu(for: entry) { app in self.parent.openWith(entry, app) }
                     menu.addItem(item)
                 }
-                add("Rename…") { self.parent.action(.rename) }
+                add("Rename…", enabled: parent.pane.supportsMutations) { self.parent.action(.rename) }
             }
-            add("Move To…", enabled: !entries.isEmpty) { self.parent.action(.move) }
-            add("Permissions…", enabled: !entries.isEmpty) { self.parent.action(.chmod) }
+            add("Move To…", enabled: !entries.isEmpty && parent.pane.supportsMutations) { self.parent.action(.move) }
+            add("Permissions…", enabled: !entries.isEmpty && parent.pane.supportsMutations) { self.parent.action(.chmod) }
             menu.addItem(.separator())
-            add("New Folder…") { self.parent.action(.folder) }; add("New File…") { self.parent.action(.file) }
+            add("New Folder…", enabled: parent.pane.supportsMutations) { self.parent.action(.folder) }; add("New File…", enabled: parent.pane.supportsMutations) { self.parent.action(.file) }
             menu.addItem(.separator())
-            add(parent.pane.remote ? "Delete Permanently…" : "Move to Trash…", enabled: !entries.isEmpty) { self.parent.delete() }
+            add(parent.pane.remote ? "Delete Permanently…" : "Move to Trash…", enabled: !entries.isEmpty && parent.pane.supportsMutations) { self.parent.delete() }
             return menu
         }
     }

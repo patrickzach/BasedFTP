@@ -50,6 +50,7 @@ enum LocalFiles {
         let initial = profile?.initialPath ?? FileManager.default.homeDirectoryForCurrentUser.path
         path = initial; pathInput = initial
     }
+    var supportsMutations: Bool { profile?.transport.supportsMutations ?? true }
     var allEntries: [FileEntry] { entries + children.values.flatMap { $0 } }
     func depth(of entry: FileEntry) -> Int { depths[entry.path] ?? 0 }
     var visible: [FileEntry] {
@@ -151,6 +152,7 @@ enum LocalFiles {
         perform(status: nil) { client, _ in try work(client) }
     }
     private func perform(status: String?, _ work: @escaping @Sendable ((any RemoteFileSystem)?, @escaping @Sendable (String) -> Void) throws -> Void) {
+        guard supportsMutations else { error = ServerProtocol.ftpBrowsingNotice; return }
         guard !busy else { return }; busy = true; error = nil; cancellable = remote; operationMessage = status
         childOperations.values.forEach { $0.cancel() }; childOperations.removeAll(); loadingChildren = []
         let control = OperationControl(); operation = control

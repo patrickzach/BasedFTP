@@ -20,7 +20,7 @@ enum CredentialStore {
         return String(data: data, encoding: .utf8)
     }
     static func delete(profile: UUID) {
-        for purpose in ["password", "passphrase"] { try? save("", profile: profile, purpose: purpose) }
+        for purpose in ["password", "passphrase", "ftp-password"] { try? save("", profile: profile, purpose: purpose) }
     }
 }
 
@@ -53,7 +53,7 @@ enum CredentialStore {
             guard words.first?.lowercased() == "host" else { continue }
             for word in words.dropFirst() {
                 let alias = String(word)
-                guard !alias.contains(where: { "*?!#".contains($0) }), !profiles.contains(where: { $0.host == alias }) else { continue }
+                guard !alias.contains(where: { "*?!#".contains($0) }), !profiles.contains(where: { $0.host == alias && $0.transport == .sftp }) else { continue }
                 var p = ServerProfile(); p.name = alias; p.host = alias; profiles.append(p)
             }
         }

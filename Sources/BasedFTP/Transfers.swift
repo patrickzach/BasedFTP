@@ -103,6 +103,7 @@ final class TransferCheckpoint: @unchecked Sendable {
     private var active: Set<UUID> = []
     var onComplete: (() -> Void)?
     func enqueue(_ entries: [FileEntry], profile: ServerProfile, destination: String, upload: Bool) {
+        guard profile.transport.supportsTransfers else { return }
         for entry in entries { jobs.append(TransferJob(profile: profile, source: entry, destination: FileEntry.join(destination, entry.name), upload: upload, policy: policy)) }
         pump()
     }

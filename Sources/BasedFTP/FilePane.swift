@@ -15,10 +15,10 @@ struct FilePane: View {
                 Label(pane.remote ? "Remote" : "Local", systemImage: pane.remote ? "server.rack" : "laptopcomputer").font(.headline)
                 Spacer()
                 if pane.busy { ProgressView().controlSize(.small); if pane.cancellable { Button { pane.cancel() } label: { Image(systemName: "xmark.circle") }.buttonStyle(.plain).accessibilityLabel("Cancel Operation") } }
-                Button { workspace.transfer(from: pane) } label: { Image(systemName: pane.remote ? "arrow.down.to.line" : "arrow.up.to.line") }.accessibilityLabel(pane.remote ? "Download" : "Upload").help(pane.remote ? "Download Selection" : "Upload Selection").disabled(pane.selected.isEmpty)
+                Button { workspace.transfer(from: pane) } label: { Image(systemName: pane.remote ? "arrow.down.to.line" : "arrow.up.to.line") }.accessibilityLabel(pane.remote ? "Download" : "Upload").help(pane.remote ? "Download Selection" : "Upload Selection").disabled(pane.selected.isEmpty || !workspace.supportsTransfers)
                 Menu {
-                    Button("New Folder…") { action = .folder }
-                    Button("New File…") { action = .file }
+                    Button("New Folder…") { action = .folder }.disabled(!pane.supportsMutations)
+                    Button("New File…") { action = .file }.disabled(!pane.supportsMutations)
                     Toggle("Show Hidden Files", isOn: $pane.showHidden)
                     Picker("Sort By", selection: $pane.sort) { ForEach(PaneModel.SortField.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     Toggle("Ascending", isOn: $pane.ascending)
@@ -43,6 +43,10 @@ struct FilePane: View {
                 }.buttonStyle(.plain).font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
             }
             HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Filter files", text: $pane.filter).textFieldStyle(.plain) }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
+            if pane.profile?.transport == .ftp {
+                Text("FTP · Unencrypted · Browsing only").font(.caption).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.bottom, 8)
+            }
             Divider()
             FileOutlineView(pane: pane, workspace: workspace, tabID: tabID,
                             open: open, openWith: { entry, app in open(entry, application: app) }, action: { action = $0 }, delete: { deleteAlert = true })
@@ -65,7 +69,7 @@ struct FilePane: View {
         }
         .onTapGesture { workspace.activeRemote = pane.remote }
         .onReceive(NotificationCenter.default.publisher(for: .paneCommand)) { notification in
-            guard workspace.activePane?.id == pane.id else { return }
+            guard workspace.activePane?.id == pane.id, pane.supportsMutations else { return }
             switch notification.object as? String {
             case "folder": action = .folder
             case "rename": if pane.selected.count == 1 { action = .rename }
@@ -90,7 +94,7 @@ struct FilePane: View {
         } message: { Text(pane.remote ? "Folders and all their contents will be permanently deleted." : "The files will be moved to the macOS Trash.") }
     }
     private func acceptDrop(_ providers: [NSItemProvider], directory: String) -> Bool {
-        guard !pane.busy else { return false }
+        guard !pane.busy, workspace.supportsTransfers else { return false }
         var accepted = false
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier), pane.remote, let profile = pane.profile {
@@ -116,6 +120,7 @@ struct FilePane: View {
         if entry.isDirectory { pane.navigate(entry.path) }
         else if entry.isSymlink { pane.error = "Open symbolic links using an explicit destination path." }
         else if !entry.isRegular { pane.error = "Only regular files can be opened in an application." }
+        else if let profile = pane.profile, !profile.transport.supportsTransfers { pane.error = ServerProtocol.ftpBrowsingNotice }
         else if let profile = pane.profile { workspace.edits.open(profile: profile, entry: entry, application: application) }
         else {
             Task { do { try await EditorApplications.open(URL(fileURLWithPath: entry.path), application: application) } catch { pane.error = error.localizedDescription } }
@@ -212,7 +217,7 @@ struct StatusBar: View {
     var body: some View {
         HStack {
             Circle().fill(remote.busy ? .orange : remote.error == nil && !remote.entries.isEmpty ? .green : .secondary).frame(width: 6, height: 6)
-            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · SSH / SFTP" : "Check Connection")
+            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · \(tab.profile.transport == .sftp ? "SSH / SFTP" : "FTP · Unencrypted · Browsing only")" : "Check Connection")
             Spacer(); Text("\(queue.jobs.filter { !$0.terminal }.count) transfers pending")
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 7).background(.bar)
     }

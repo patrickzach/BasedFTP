@@ -27,7 +27,7 @@ Requirements: Xcode with the macOS SDK and Swift 6 or later. The build script pr
 
 Regenerate the project without additional tools using `python3 Scripts/generate-project.py`. The Swift package and Xcode project use the same source files. The build script also provides an alternative if the local Xcode IDE installation is broken.
 
-## First connection
+## First SFTP connection
 
 1. Add a server. The host can be a DNS name, IPv4 address, or alias from `~/.ssh/config`. For IPv6, use an SSH alias for now. Leave the username and port blank to use the OpenSSH configuration.
 2. Select an SSH key or use your existing SSH agent. OpenSSH handles Ed25519, RSA with modern signatures, and ECDSA. Passphrase-protected keys can be unlocked through the agent or a passphrase stored in Keychain.
@@ -36,6 +36,26 @@ Regenerate the project without additional tools using `python3 Scripts/generate-
 5. Test the connection, then connect. For a quick connection, turn off **Save server profile**.
 
 For ProxyJump/ProxyCommand, verify host keys once using the standard OpenSSH client in Terminal. Subsequent SFTP connections support this configuration through OpenSSH. Import is available under **Connections → Import from SSH Configuration** and lists explicit host aliases from the main configuration file. Include files and wildcards are not expanded during import, but OpenSSH evaluates them normally when connecting.
+
+## FTP browsing (step 2)
+
+Choose **FTP (Unencrypted)** in the server dialog. Enter a hostname or IPv4 address, username, password, optional port (default **21**), and initial directory (default **.**, the login directory). Use `anonymous` explicitly for anonymous access. **Test Connection** verifies login and a passive directory listing. FTP passwords have a separate Keychain entry from SFTP passwords; changing a profile's protocol does not reuse its SSH password.
+
+You can browse directories, expand the folder tree, navigate with breadcrumbs/back/forward, sort, filter, and show hidden files. FTP sends credentials and listings without encryption; use SFTP for secure connections. **FTPS is not implemented yet.**
+
+This step is **browsing only**: FTP uploads/downloads, remote editing, remote moves, creation, deletion, and chmod are disabled. SFTP retains its existing features. FTP currently requires UTF-8 and RFC 3659 **MLSD** listings; legacy LIST-only servers receive an explanatory error. Unknown permissions, sizes, and modification times display as **—**. FTP paths use the server's virtual filesystem and are normalized lexically; they do not provide SFTP-style canonical symlink resolution. Control characters in FTP paths/credentials are rejected. Direct IPv6 literals are not supported in FTP profiles yet.
+
+The backend uses macOS `/usr/bin/curl` and its libcurl FTP implementation. It negotiates passive EPSV/PASV, connects data channels to the control peer rather than an advertised foreign PASV address, disables user curl configuration and proxies, and has a 15-second connection timeout and 60-second request limit. Listings are capped at 32 MiB. Credentials are passed through stdin configuration; diagnostics remain in memory and arbitrary server replies are not displayed. Each listing uses a separate process, with cancellation through the existing operation controller.
+
+To run the real loopback FTP tests, install the **test-only** dependency (not bundled with the app):
+
+```bash
+python3 -m venv .build/ftp-test-venv
+.build/ftp-test-venv/bin/python -m pip install pyftpdlib==2.2.0
+bash Scripts/ftp-integration-test.sh
+```
+
+The script starts two isolated pyftpdlib servers bound only to `127.0.0.1`, using temporary directories and synthetic credentials, then cleans them up. To run the entire suite with both FTP and SSH servers available, use `bash Scripts/ftp-integration-test.sh bash Scripts/integration-test.sh`. `FTP_TEST_PYTHON` can select another Python installation with pyftpdlib installed. Without these servers, the network FTP tests are explicitly skipped.
 
 ## Usage
 
@@ -57,8 +77,9 @@ For ProxyJump/ProxyCommand, verify host keys once using the standard OpenSSH cli
 ## Architecture and technical decisions
 
 - `Models.swift`: profiles, file metadata, navigation, and conflict strategies.
-- `RemoteFileSystem.swift`: protocol-independent remote file operations and the central connection factory. Browsing, transfers, connection testing, and remote editing use this interface. Only SFTP is currently implemented; FTP/FTPS support is a later step. Missing entries are distinguished from permission and connection failures inside each backend.
+- `RemoteFileSystem.swift`: protocol-independent remote file operations and the central connection factory. Browsing, transfers, connection testing, and remote editing use this interface. SFTP is fully implemented; FTP currently supports browsing only, with FTPS deferred. Missing entries are distinguished from permission and connection failures inside each backend.
 - `OperationControl.swift`: shared operation lifetime, cancellation, pause, and process timeout handling. The existing process-based implementation is retained.
+- `FTP.swift`: curl-backed passive FTP browsing, UTF-8 MLSD parsing, safe URL/configuration construction, and explicit rejection of unavailable operations.
 - `SFTP.swift`: binary SFTP v3 framing and file commands over stdin/stdout of `/usr/bin/ssh -s … sftp`. No shell command chains, `ls` parsing, or custom SSH cryptography.
 - `FileSystem.swift`: local file access and asynchronous panel view models with protection against stale navigation results.
 - `Transfers.swift`: bounded parallel queue, recursive transfers, conflicts, progress, average speed, and estimated remaining time.
@@ -70,7 +91,7 @@ For ProxyJump/ProxyCommand, verify host keys once using the standard OpenSSH cli
 
 **SSH backend:** Instead of bundling an additional SSH library, the app uses Apple's maintained system OpenSSH. This provides an established SSH implementation without an external dependency and preserves compatibility with agents, `Include`, `Match`, IdentityFile, and ProxyJump. The app implements only SFTP v3 file commands, not transport encryption. [libssh2](https://github.com/libssh2/libssh2), also evaluated, would add a C build/distribution dependency. [SwiftNIO SSH](https://github.com/apple/swift-nio-ssh) describes itself as an SSH building block rather than a complete client and lists Ed25519/ECDSA in its documented asymmetric algorithm set. The requirement for RSA and existing OpenSSH configurations led to choosing the system client.
 
-Each navigation request, file operation, or transfer job uses its own SSH subsystem process. Canceling one job therefore does not affect other connections. There is currently no persistent, app-managed connection pool or automatic retry of write operations. Retry reconnects. User-configured OpenSSH multiplexing settings may still apply.
+For SFTP, each navigation request, file operation, or transfer job uses its own SSH subsystem process. Canceling one job therefore does not affect other connections. There is currently no persistent, app-managed connection pool or automatic retry of write operations. Retry reconnects. User-configured OpenSSH multiplexing settings may still apply.
 
 Protocol I/O runs outside the Main Actor. The interface receives throttled progress updates. Transfers use 64 KiB blocks with up to eight outstanding requests. Response IDs are checked, out-of-order responses buffered, and short server reads completed. Cross-connection bandwidth limiting and adaptive window sizes are not currently implemented.
 
@@ -80,12 +101,15 @@ References consulted during implementation:
 - [OpenSSH configuration and precedence](https://man.openbsd.org/ssh_config)
 - [SFTP v3 protocol](https://www.ietf.org/archive/id/draft-ietf-secsh-filexfer-02.txt)
 - [OpenSSH SFTP extensions](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL)
+- [curl options and FTP behavior](https://curl.se/docs/manpage.html)
+- [curl FTP URL syntax](https://curl.se/docs/url-syntax.html)
+- [RFC 3659 MLSD directory listings](https://www.rfc-editor.org/rfc/rfc3659.html)
 
 ## Security and limitations
 
 - `StrictHostKeyChecking=yes`, no agent forwarding, LocalCommand execution, or port forwarding. The app enforces `~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`; alternative KnownHosts paths from SSH configuration are deliberately ignored. Automatic DNS-based host-key acceptance and automatic key updates are disabled.
-- Passwords and passphrases are stored only in macOS Keychain. A dedicated, short-lived ASKPASS subprocess supplies them to OpenSSH through a pipe. Secrets are absent from process arguments, environment variables, profile JSON, and logs. Private keys remain at their existing locations.
-- Profile names and filenames are never executed as shell code. Hosts and ports are validated, and protocol packets have size limits. UTF-8 filenames, including spaces, quotes, Unicode, and newlines, are supported. Non-UTF-8 filenames are explicitly rejected.
+- Passwords and passphrases are stored only in macOS Keychain. For SFTP, a dedicated, short-lived ASKPASS subprocess supplies them to OpenSSH through a pipe. FTP uses a separate password entry and supplies credentials to curl over stdin. Secrets are absent from process arguments, environment variables, profile JSON, and logs. Private keys remain at their existing locations.
+- Profile names and filenames are never executed as shell code. Hosts and ports are validated, and protocol packets have size limits. SFTP supports UTF-8 filenames, including spaces, quotes, Unicode, and newlines. FTP rejects control characters, including newlines. Non-UTF-8 filenames are explicitly rejected.
 - New transfers first write a uniquely named `.partial` file in the destination folder. It is committed only after successful completion. OpenSSH servers use `posix-rename@openssh.com`; overwriting after a completed upload is not atomic on servers without this extension. Hidden staging files may remain after failures and require manual cleanup.
 - **Resume** writes directly into the existing destination file. Use it only with an identical prefix: SFTP v3 cannot guarantee a content comparison of existing partial data. A larger destination file causes failure. Retry retains the original strategy. Resume on a canceled job uses its saved staging paths; after restarting the app, leftover staging files must be identified/renamed manually. First ensure the source is unchanged.
 - Symlinks and special files are individually skipped during uploads/downloads, allowing recursive transfers to continue without following links. The queue shows their count and full paths under **items skipped – Details**; successful jobs with skipped entries display **Completed with Warnings**. Navigation to a known destination path remains possible. There is no complete protection against concurrent malicious filesystem changes.
