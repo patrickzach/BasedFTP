@@ -130,7 +130,7 @@ private actor ControlledEditBackend: RemoteEditBackend {
         try client.createFile(remote)
         defer { if let entry = try? client.stat(remote) { try? client.delete(entry) } }
         let entry = try client.stat(remote)
-        let edit = RemoteEdit(profile: profile, entry: entry, backend: SFTPEditBackend(profile: profile, entry: entry, knownHosts: hosts), directory: URL(fileURLWithPath: root).appendingPathComponent(UUID().uuidString))
+        let edit = RemoteEdit(profile: profile, entry: entry, backend: RemoteFileEditBackend(profile: profile, entry: entry, knownHosts: hosts), directory: URL(fileURLWithPath: root).appendingPathComponent(UUID().uuidString))
         defer { edit.stop() }
         edit.start(openEditor: false)
         try await waitFor { edit.ready && !edit.busy }
@@ -165,7 +165,7 @@ private actor ControlledEditBackend: RemoteEditBackend {
         XCTAssertEqual(try String(contentsOf: stage, encoding: .utf8), "stage")
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent("child").path))
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/reordering-server.py")
-        let noExtension = try SFTPClient(profile: nil, localServer: fixture.path); defer { noExtension.close() }
+        let noExtension: any RemoteFileSystem = try SFTPClient(profile: nil, localServer: fixture.path); defer { noExtension.close() }
         XCTAssertThrowsError(try noExtension.uploadEditingSnapshot(local, to: "/fixture", permissions: 0o644)) { error in
             XCTAssertTrue(error.localizedDescription.contains("atomic replacement"))
         }

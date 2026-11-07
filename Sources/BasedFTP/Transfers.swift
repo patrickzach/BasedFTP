@@ -128,7 +128,7 @@ final class TransferCheckpoint: @unchecked Sendable {
             Task {
                 do {
                     let result = try await Task.detached(priority: .utility) {
-                        let client = try SFTPClient(profile: profile, control: control); defer { client.close() }
+                        let client = try RemoteFileSystems.connect(profile: profile, control: control); defer { client.close() }
                         let engine = TransferEngine(client: client, upload: upload, policy: policy, checkpoint: checkpoint, resumeCheckpoint: resumeCheckpoint, retryPolicy: initialPolicy)
                         try engine.run(source: source, destination: destination, warning: { warning in
                             Task { @MainActor in job.addWarning(warning) }
@@ -152,7 +152,7 @@ final class TransferCheckpoint: @unchecked Sendable {
 }
 
 final class TransferEngine {
-    let client: SFTPClient
+    let client: any RemoteFileSystem
     let upload: Bool
     let policy: ConflictPolicy
     let checkpoint: TransferCheckpoint
@@ -174,7 +174,7 @@ final class TransferEngine {
         }
         return true
     }
-    init(client: SFTPClient, upload: Bool, policy: ConflictPolicy, checkpoint: TransferCheckpoint = TransferCheckpoint(), resumeCheckpoint: Bool = false, retryPolicy: ConflictPolicy = .rename) { self.retryPolicy = retryPolicy; self.client = client; self.upload = upload; self.policy = policy; self.checkpoint = checkpoint; self.resumeCheckpoint = resumeCheckpoint }
+    init(client: any RemoteFileSystem, upload: Bool, policy: ConflictPolicy, checkpoint: TransferCheckpoint = TransferCheckpoint(), resumeCheckpoint: Bool = false, retryPolicy: ConflictPolicy = .rename) { self.retryPolicy = retryPolicy; self.client = client; self.upload = upload; self.policy = policy; self.checkpoint = checkpoint; self.resumeCheckpoint = resumeCheckpoint }
     private func children(_ entry: FileEntry) throws -> [FileEntry] { upload ? try LocalFiles.list(entry.path) : try client.list(entry.path) }
     private func measure(_ entry: FileEntry) throws -> TransferSize {
         guard !skipUnsupported(entry) else { return TransferSize() }
@@ -196,7 +196,7 @@ final class TransferEngine {
         try transfer(fresh, destination: destination, progress: progress); progress(done, total); reportFiles(fileProgress)
     }
     private func destinationEntry(_ path: String) throws -> FileEntry? {
-        if upload { do { return try client.stat(path) } catch let e as FTPError where e.isMissing { return nil } }
+        if upload { return try client.entryIfExists(path) }
         do { return try LocalFiles.entry(URL(fileURLWithPath: path)) }
         catch let error as NSError where error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { return nil }
     }

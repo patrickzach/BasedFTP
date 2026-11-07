@@ -26,6 +26,10 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Changed
 
+- Extracted a shared remote filesystem interface and connection factory for browsing, transfers, connection tests, and remote editing. SFTP remains the only implemented transport; its authentication, host-key verification, transfer behavior, and atomic editor uploads are preserved.
+- Moved operation control and deletion progress into shared components; remote existence checks no longer expose SFTP status codes to the transfer engine.
+- Added real SFTP subsystem tests for interface-based transfers/file operations and missing-entry versus permission/connection errors. SSH trust and round-trip tests now exercise the connection factory.
+
 - Converted all app-owned interface text to English by default: menus, dialogs, status indicators, file counters, remaining times, and errors. The app bundle and Xcode project declare English as the development language.
 - Moved SSH host import from the sidebar to **Connections → Import from SSH Configuration**.
 - Recursive remote deletion uses up to 16 outstanding delete requests instead of waiting for an individual response per entry. Parent directories are removed only after their children are confirmed deleted.

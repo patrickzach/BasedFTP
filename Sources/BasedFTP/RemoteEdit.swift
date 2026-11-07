@@ -52,20 +52,20 @@ protocol RemoteEditBackend: Sendable {
     func download(to file: URL, control: OperationControl) async throws
     func upload(_ snapshot: URL, control: OperationControl) async throws
 }
-struct SFTPEditBackend: RemoteEditBackend {
+struct RemoteFileEditBackend: RemoteEditBackend {
     let profile: ServerProfile
     let entry: FileEntry
     let knownHosts: URL?
     init(profile: ServerProfile, entry: FileEntry, knownHosts: URL? = nil) { self.profile = profile; self.entry = entry; self.knownHosts = knownHosts }
     func download(to file: URL, control: OperationControl) async throws {
         try await Task.detached {
-            let client = try SFTPClient(profile: profile, control: control, knownHosts: knownHosts); defer { client.close() }
+            let client = try RemoteFileSystems.connect(profile: profile, control: control, knownHosts: knownHosts); defer { client.close() }
             try client.download(entry.path, to: file, resume: false) { _ in }
         }.value
     }
     func upload(_ snapshot: URL, control: OperationControl) async throws {
         try await Task.detached {
-            let client = try SFTPClient(profile: profile, control: control, knownHosts: knownHosts); defer { client.close() }
+            let client = try RemoteFileSystems.connect(profile: profile, control: control, knownHosts: knownHosts); defer { client.close() }
             try client.uploadEditingSnapshot(snapshot, to: entry.path, permissions: entry.permissions)
         }.value
     }
@@ -104,7 +104,7 @@ struct SFTPEditBackend: RemoteEditBackend {
     var busy: Bool { downloadTask != nil || uploadTask != nil }
     init(profile: ServerProfile, entry: FileEntry, backend: (any RemoteEditBackend)? = nil, directory: URL? = nil) {
         self.profile = profile; self.entry = entry
-        self.backend = backend ?? SFTPEditBackend(profile: profile, entry: entry)
+        self.backend = backend ?? RemoteFileEditBackend(profile: profile, entry: entry)
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("BasedFTP/Edits")
         self.directory = directory ?? root.appendingPathComponent(UUID().uuidString)
         file = self.directory.appendingPathComponent(entry.name)

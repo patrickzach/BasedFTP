@@ -87,7 +87,7 @@ enum LocalFiles {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try control.touch()
-                    if let profile { let client = try SFTPClient(profile: profile, control: control); defer { client.close() }; return try client.list(directory) }
+                    if let profile { let client = try RemoteFileSystems.connect(profile: profile, control: control); defer { client.close() }; return try client.list(directory) }
                     return try LocalFiles.list(directory)
                 }.value
                 guard generation == token else { return }
@@ -125,7 +125,7 @@ enum LocalFiles {
             do {
                 let result = try await Task.detached(priority: .userInitiated) { () -> (String, [FileEntry]) in
                     if let profile {
-                        let client = try SFTPClient(profile: profile, control: control); defer { client.close() }
+                        let client = try RemoteFileSystems.connect(profile: profile, control: control); defer { client.close() }
                         let canonical = try client.realpath(target); return (canonical, try client.list(canonical))
                     }
                     let canonical = (target as NSString).expandingTildeInPath
@@ -147,10 +147,10 @@ enum LocalFiles {
     func back() { if let target = history.goBack(current: path) { navigate(target, record: false) } }
     func forward() { if let target = history.goForward(current: path) { navigate(target, record: false) } }
     func up() { navigate((path as NSString).deletingLastPathComponent.isEmpty ? "/" : (path as NSString).deletingLastPathComponent) }
-    func perform(_ work: @escaping @Sendable (SFTPClient?) throws -> Void) {
+    func perform(_ work: @escaping @Sendable ((any RemoteFileSystem)?) throws -> Void) {
         perform(status: nil) { client, _ in try work(client) }
     }
-    private func perform(status: String?, _ work: @escaping @Sendable (SFTPClient?, @escaping @Sendable (String) -> Void) throws -> Void) {
+    private func perform(status: String?, _ work: @escaping @Sendable ((any RemoteFileSystem)?, @escaping @Sendable (String) -> Void) throws -> Void) {
         guard !busy else { return }; busy = true; error = nil; cancellable = remote; operationMessage = status
         childOperations.values.forEach { $0.cancel() }; childOperations.removeAll(); loadingChildren = []
         let control = OperationControl(); operation = control
@@ -163,7 +163,7 @@ enum LocalFiles {
             do {
                 try await Task.detached {
                     try control.touch()
-                    if let profile { let client = try SFTPClient(profile: profile, control: control); defer { client.close() }; try work(client, update) }
+                    if let profile { let client = try RemoteFileSystems.connect(profile: profile, control: control); defer { client.close() }; try work(client, update) }
                     else { try work(nil, update) }
                 }.value
                 guard generation == token else { return }

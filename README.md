@@ -57,6 +57,8 @@ For ProxyJump/ProxyCommand, verify host keys once using the standard OpenSSH cli
 ## Architecture and technical decisions
 
 - `Models.swift`: profiles, file metadata, navigation, and conflict strategies.
+- `RemoteFileSystem.swift`: protocol-independent remote file operations and the central connection factory. Browsing, transfers, connection testing, and remote editing use this interface. Only SFTP is currently implemented; FTP/FTPS support is a later step. Missing entries are distinguished from permission and connection failures inside each backend.
+- `OperationControl.swift`: shared operation lifetime, cancellation, pause, and process timeout handling. The existing process-based implementation is retained.
 - `SFTP.swift`: binary SFTP v3 framing and file commands over stdin/stdout of `/usr/bin/ssh -s … sftp`. No shell command chains, `ls` parsing, or custom SSH cryptography.
 - `FileSystem.swift`: local file access and asynchronous panel view models with protection against stale navigation results.
 - `Transfers.swift`: bounded parallel queue, recursive transfers, conflicts, progress, average speed, and estimated remaining time.

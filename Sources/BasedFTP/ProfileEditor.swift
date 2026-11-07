@@ -65,7 +65,7 @@ struct ProfileEditor: View {
         guard save() else { return }; busy = true; let p = profile
         Task {
             do {
-                let path = try await Task.detached { let c = try SFTPClient(profile: p); defer { c.close() }; return try c.realpath(p.initialPath) }.value
+                let path = try await Task.detached { let c = try RemoteFileSystems.connect(profile: p); defer { c.close() }; return try c.realpath(p.initialPath) }.value
                 result = "SSH authentication and SFTP succeeded. Directory: \(path)"
             } catch { result = error.localizedDescription }
             busy = false

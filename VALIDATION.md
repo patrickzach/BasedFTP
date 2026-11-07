@@ -134,3 +134,12 @@ Functional limitations and security decisions are documented in the README. This
 - `Scripts/build-app.sh` now creates the universal bundle by default. A repeat run with existing build caches also succeeded. Architecture-specific build directories are separated under `.build/universal/`.
 - Set the Xcode project to `arm64 x86_64` and `ONLY_ACTIVE_ARCH = NO`; project syntax validation passed. The known local Xcode plugin limitation remains.
 - No runtime test on physical Intel hardware. Intel support is demonstrated by successful cross-compilation and architecture/deployment checks, not a hardware test.
+
+## Addendum: shared remote filesystem interface (FTP preparation, step 1)
+
+- Extracted `RemoteFileSystem` and `RemoteFileSystems.connect`. File panels, the transfer queue, connection testing, and the remote editing adapter now use the shared interface/factory. `SFTPClient` implements it; no FTP/FTPS backend, protocol picker, or profile migration is introduced in this step.
+- Moved the existing operation controller unchanged into `OperationControl.swift` and deletion progress into the shared interface file. Remote sessions remain serially used on worker tasks, with explicit close handling. SFTP framing, OpenSSH arguments, authentication, trust verification, transfer pipelining, and atomic editor replacement are retained.
+- Added two real local SFTP subsystem tests: interface-based upload/download and file operations, plus confirmation that missing entries return nil while permission and connection failures throw. The existing no-atomic-extension editor rejection test uses the shared interface. Existing SSH host-key rejection and round-trip tests now use the production connection factory; automatic editor integration uses the shared remote editing adapter.
+- First local regression run after extraction: 27 methods, 24 passed, three separately configured SSH tests skipped. Final isolated SSH run including new tests: all 29 methods passed, none skipped; three additional RSA, ECDSA, and encrypted Ed25519/agent round trips passed (32 test executions total).
+- `Scripts/build-app.sh` successfully built and signed the universal release app; `lipo -archs` confirms `x86_64 arm64`. The script's strict signature verification passed. Xcode project regeneration and `plutil` syntax validation passed.
+- No new visual UI behavior was introduced or manually retested. The previously documented local Xcode IDE limitation and absence of physical Intel runtime testing remain.

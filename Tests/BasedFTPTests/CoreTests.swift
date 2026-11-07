@@ -281,7 +281,7 @@ final class CoreTests: XCTestCase {
         let empty = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data().write(to: empty); defer { try? FileManager.default.removeItem(at: empty) }
         for url in [empty, URL(fileURLWithPath: wrong)] {
-            XCTAssertThrowsError(try SFTPClient(profile: profile, knownHosts: url)) { error in
+            XCTAssertThrowsError(try RemoteFileSystems.connect(profile: profile, knownHosts: url)) { error in
                 XCTAssertTrue(error.localizedDescription.contains("Host key verification failed"), error.localizedDescription)
             }
         }
@@ -290,7 +290,7 @@ final class CoreTests: XCTestCase {
         let environment = ProcessInfo.processInfo.environment
         guard let host = environment["BASEDFTP_TEST_HOST"], let directory = environment["BASEDFTP_TEST_DIRECTORY"] else { throw XCTSkip("SSH-Integration: BASEDFTP_TEST_HOST und BASEDFTP_TEST_DIRECTORY setzen") }
         var profile = ServerProfile(); profile.host = host; profile.user = environment["BASEDFTP_TEST_USER"] ?? ""; profile.port = environment["BASEDFTP_TEST_PORT"] ?? ""; profile.keyPath = environment["BASEDFTP_TEST_KEY"] ?? ""
-        let client = try SFTPClient(profile: profile, knownHosts: environment["BASEDFTP_TEST_KNOWN_HOSTS"].map { URL(fileURLWithPath: $0) }); defer { client.close() }
+        let client = try RemoteFileSystems.connect(profile: profile, knownHosts: environment["BASEDFTP_TEST_KNOWN_HOSTS"].map { URL(fileURLWithPath: $0) }); defer { client.close() }
         let folder = FileEntry.join(directory, "basedftp-integration-" + UUID().uuidString)
         try client.mkdir(folder)
         defer { if let entry = try? client.stat(folder) { try? client.delete(entry) } }
