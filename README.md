@@ -88,3 +88,13 @@ References consulted during implementation:
 ## Validation of this version
 
 See [VALIDATION.md](VALIDATION.md) for details and checks actually performed. Password authentication and the Keychain/ASKPASS chain additionally require an interactive test with a suitable test account; they are implemented but not claimed as fully tested end to end. Large production directories, hours-long transfers, different third-party servers, and older macOS versions need further practical testing before this version can be considered a professionally hardened 1.0.
+
+## Landing page (GitHub Pages)
+
+The prebuilt landing page lives in `docs/index.html`. It includes its styles and images, so no Node.js or Astro build is required in this repository.
+
+1. In the GitHub repository, open **Settings → Pages** and select **GitHub Actions** as the source.
+2. Push the changes to `main`. The **Deploy landing page** workflow publishes changes to `docs/` or the workflow itself. It can also be run manually from the Actions tab.
+3. The default site address is https://patrickzach.github.io/BasedFTP/.
+
+To update the page, replace `docs/index.html` with a fresh export from the landing-page project, commit, and push. The workflow uploads only `docs/`, not app sources or build artifacts.

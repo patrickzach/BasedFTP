@@ -6,6 +6,8 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- Prebuilt landing page in `docs/index.html` and a GitHub Actions workflow for GitHub Pages deployment, with setup and update instructions.
+
 - Universal app for Apple Silicon (`arm64`) and Intel (`x86_64`), requiring macOS 14 or later. The build script compiles both variants separately, combines them using `lipo`, and signs/verifies the combined bundle. The Xcode project is also configured for both architectures.
 - Open remote files directly in an editor after a background download, without an intermediate Finder step or modal upload dialog.
 - Native Open With application selection, an application picker, and per-extension BasedFTP defaults without changing global macOS associations.
