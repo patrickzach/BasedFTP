@@ -6,6 +6,11 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- FTP upload/download of individual regular files through the shared parallel transfer queue, with byte/file progress, speed/ETA, pause, cancellation, retry, and explicit upload/download resumption.
+- System-libcurl API binding with a small typed C adapter; transfer credentials remain in memory and progress comes from callbacks rather than CLI text. Universal builds link the system library without bundling a dependency.
+- Staged FTP uploads committed using RNFR/RNTO, Skip/Rename/Overwrite conflicts, and retention of old destinations on failed uploads or rejected commits. No delete fallback is used; FTP atomicity and concurrent-client limitations are documented.
+- Real-server tests for binary/empty files in EPSV/PASV, conflict strategies, upload/commit failures, interrupted upload/download recovery, oversized partial rejection, native pause/cancel, and real parallel queue uploads/downloads. FTP folder operations and remote editing remain disabled.
+
 - FTP browsing through system curl/libcurl: username/password login, custom ports, passive EPSV/PASV directory listings, UTF-8 MLSD metadata, folder-tree navigation, and cancellation.
 - SFTP/FTP protocol selection, backward-compatible SFTP profile decoding, separate FTP Keychain passwords, and visible unencrypted/browsing-only notices. FTP transfers, mutations, drag/drop, and remote editing are disabled pending later steps; local file operations remain available.
 - MLSD/parser, profile migration, URL/configuration safety, and browsing-only gate tests, plus isolated real pyftpdlib FTP servers testing EPSV, PASV fallback, foreign PASV-address rejection, authentication/access errors, unsupported MLSD, and cancellation.

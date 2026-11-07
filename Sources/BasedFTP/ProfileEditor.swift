@@ -49,8 +49,8 @@ struct ProfileEditor: View {
             if profile.transport == .sftp {
                 Text("SSH agent and ~/.ssh/config are used automatically. Credentials are stored in macOS Keychain. Empty fields only change stored credentials when the replace option is enabled.").font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("FTP sends your password and directory listings without encryption. Use SFTP for secure connections. FTPS is not implemented yet.").font(.caption).foregroundStyle(.orange)
-                Text(ServerProtocol.ftpBrowsingNotice + " Passwords are stored separately in macOS Keychain; leave the field empty to use a stored password.").font(.caption).foregroundStyle(.secondary)
+                Text("FTP sends your password and file contents without encryption. Use SFTP for secure connections. FTPS is not implemented yet.").font(.caption).foregroundStyle(.orange)
+                Text(ServerProtocol.ftpLimitationsNotice + " Passwords are stored separately in macOS Keychain; leave the field empty to use a stored password.").font(.caption).foregroundStyle(.secondary)
             }
             if let result { Text(result).font(.caption).textSelection(.enabled).frame(maxHeight: 100).fixedSize(horizontal: false, vertical: true) }
             HStack {

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sys
 from pyftpdlib.authorizers import DummyAuthorizer
-from pyftpdlib.handlers import FTPHandler
+from pyftpdlib.handlers import FTPHandler, ThrottledDTPHandler
 from pyftpdlib.servers import FTPServer
 
 logging.disable(logging.CRITICAL)
@@ -14,15 +14,39 @@ mode = sys.argv[2]
 filesystem = root / ("files-" + mode)
 home = filesystem / "home"
 home.mkdir(parents=True)
-for name in ("sub folder", "empty", "denied", "no-mlsd", "slow"):
+for name in ("sub folder", "empty", "denied", "no-mlsd", "slow", "upload-denied"):
     (home / name).mkdir()
 (home / "hello ü #%.txt").write_text("hello FTP", encoding="utf-8")
 (home / ".hidden").write_text("hidden", encoding="utf-8")
 (home / "sub folder" / "nested.txt").write_text("nested", encoding="utf-8")
 authorizer = DummyAuthorizer()
-authorizer.add_user("ftp-user", os.environ["BASEDFTP_FTP_TEST_PASSWORD"], str(filesystem), perm="elr")
+authorizer.add_user("ftp-user", os.environ["BASEDFTP_FTP_TEST_PASSWORD"], str(filesystem), perm="elradfw")
+
+authorizer.add_user("ftp-queue", "", str(filesystem), perm="elradfw")
+class TestDataHandler(ThrottledDTPHandler):
+    read_limit = 512 * 1024
+    write_limit = 512 * 1024
 
 class Handler(FTPHandler):
+    dtp_handler = TestDataHandler
+    def on_file_received(self, file):
+        self.record_finished(file)
+    def on_incomplete_file_received(self, file):
+        self.record_finished(file)
+    def record_finished(self, file):
+        with (root / ("finished-" + mode)).open("a") as log:
+            log.write(Path(file).name + "\n")
+    def ftp_STOR(self, path, mode="w"):
+        if Path(path).parent.name == "upload-denied":
+            self.respond("550 Upload denied for test")
+        else:
+            super().ftp_STOR(path, mode)
+    def ftp_RNTO(self, path):
+        if Path(path).name == "commit-denied":
+            self.respond("550 Rename denied for test")
+        else:
+            super().ftp_RNTO(path)
+
     auth_failed_timeout = 0
     def on_login(self, username):
         self.fs.cwd = "/home"

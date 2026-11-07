@@ -27,6 +27,7 @@ final class OperationControl: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard !cancelled else { throw CancellationError() }
         process = value; activity = Date()
+        if paused { kill(value.processIdentifier, SIGSTOP) }
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + 5, repeating: 5)
         timer.setEventHandler { [weak self] in self?.checkTimeout() }; timer.resume(); self.timer = timer
@@ -34,6 +35,15 @@ final class OperationControl: @unchecked Sendable {
     func touch() throws {
         lock.lock(); defer { lock.unlock() }
         guard !cancelled else { throw CancellationError() }; activity = Date()
+    }
+    // Native transports cooperate here on their worker thread; the UI never waits.
+    func checkpoint() throws {
+        while true {
+            lock.lock(); let stopped = cancelled; let suspended = paused; lock.unlock()
+            if stopped { throw CancellationError() }
+            if !suspended { try touch(); return }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
     }
     func cancel() {
         lock.lock(); cancelled = true; paused = false; let p = process; lock.unlock()

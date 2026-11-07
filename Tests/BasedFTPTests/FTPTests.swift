@@ -66,22 +66,23 @@ final class FTPTests: XCTestCase {
         }
         XCTAssertThrowsError(try FTPListing.parse(Data([0xff]), directory: "/"))
     }
-    @MainActor func testBrowsingOnlyGatesTransfersMovesAndFileChanges() throws {
+    @MainActor func testFileTransfersEnabledButOtherFTPOperationsStayDisabled() throws {
         let p = profile(), pane = PaneModel(profile: p), workspace = Workspace()
         let tab = ConnectionTab(profile: p); workspace.tabs = [tab]; workspace.selected = tab.id
-        let entry = FileEntry(name: "file", path: "/file", permissions: 0o100644)
-        XCTAssertFalse(pane.supportsMutations); XCTAssertFalse(workspace.supportsTransfers)
+        let file = FileEntry(name: "file", path: "/file", permissions: 0o100644)
+        let folder = FileEntry(name: "folder", path: "/folder", permissions: 0o040755)
+        XCTAssertFalse(pane.supportsMutations); XCTAssertTrue(workspace.supportsTransfers)
+        XCTAssertTrue(workspace.canTransfer([file])); XCTAssertFalse(workspace.canTransfer([file, folder]))
+        XCTAssertFalse(p.transport.supportsRemoteEditing)
         pane.create(name: "folder", directory: true)
-        XCTAssertEqual(pane.error, ServerProtocol.ftpBrowsingNotice)
-        workspace.transfer(from: pane, entries: [entry])
+        XCTAssertEqual(pane.error, ServerProtocol.ftpLimitationsNotice)
+        workspace.transfer(from: pane, entries: [folder])
         XCTAssertTrue(workspace.queue.jobs.isEmpty)
-        XCTAssertFalse(workspace.drop([URL(fileURLWithPath: "/tmp/file").absoluteString], to: tab.remote))
-        workspace.queue.enqueue([entry], profile: p, destination: "/", upload: true)
-        XCTAssertTrue(workspace.queue.jobs.isEmpty)
-        // Factory dispatches FTP, not SSH, without consulting an SSH configuration.
         let backend = try RemoteFileSystems.connect(profile: p)
         defer { backend.close() }
         XCTAssertTrue(backend is FTPClient)
+        XCTAssertFalse(backend.transferFeatures.directories)
+        XCTAssertFalse(backend.transferFeatures.unixPermissions)
         XCTAssertThrowsError(try backend.mkdir("/forbidden"))
         XCTAssertThrowsError(try backend.uploadEditingSnapshot(URL(fileURLWithPath: "/tmp/file"), to: "/file", permissions: 0o644))
     }

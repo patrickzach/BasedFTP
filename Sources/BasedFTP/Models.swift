@@ -4,9 +4,10 @@ enum ServerProtocol: String, Codable, CaseIterable, Identifiable, Sendable {
     case sftp, ftp
     var id: String { rawValue }
     var title: String { self == .sftp ? "SFTP (SSH)" : "FTP (Unencrypted)" }
-    var supportsTransfers: Bool { self == .sftp }
+    var supportsTransfers: Bool { true }
+    var supportsRemoteEditing: Bool { self == .sftp }
     var supportsMutations: Bool { self == .sftp }
-    static let ftpBrowsingNotice = "FTP browsing only: transfers, file changes, and remote editing are not implemented yet."
+    static let ftpLimitationsNotice = "FTP supports individual file transfers. Other remote file operations, folder transfers, and remote editing are not implemented yet."
 }
 
 struct ServerProfile: Identifiable, Codable, Hashable, Sendable {

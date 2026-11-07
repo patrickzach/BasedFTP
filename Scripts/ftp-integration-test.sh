@@ -35,5 +35,5 @@ if [[ "$#" -gt 0 ]]; then
     # Allow the SSH suite to run inside this FTP environment for combined coverage.
     "$@"
 else
-    bash Scripts/test.sh --filter 'BasedFTPTests.FTPTests'
+    bash Scripts/test.sh --filter 'BasedFTPTests.FTP(Transfer)?Tests'
 fi

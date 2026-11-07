@@ -41,6 +41,10 @@ struct BookmarkActivationGate {
     let edits = RemoteEditManager()
     var tab: ConnectionTab? { tabs.first { $0.id == selected } }
     var supportsTransfers: Bool { tab?.profile.transport.supportsTransfers ?? false }
+    func canTransfer(_ entries: [FileEntry]) -> Bool {
+        guard let tab, !entries.isEmpty else { return false }
+        return tab.profile.transport == .sftp || entries.allSatisfy(\.isRegular)
+    }
     var activePane: PaneModel? { activeRemote ? tab?.remote : tab?.local }
     init() {
         edits.onUploaded = { [weak self] profile, _ in
@@ -64,8 +68,10 @@ struct BookmarkActivationGate {
     func closeSelectedTab() { if let tab { close(tab) } }
     func transfer(from pane: PaneModel, entries: [FileEntry]? = nil) {
         guard let tab else { return }
-        guard supportsTransfers else { pane.error = ServerProtocol.ftpBrowsingNotice; return }
-        queue.enqueue(entries ?? pane.selected, profile: tab.profile, destination: pane.remote ? tab.local.path : tab.remote.path, upload: !pane.remote)
+        guard supportsTransfers else { pane.error = ServerProtocol.ftpLimitationsNotice; return }
+        let items = entries ?? pane.selected
+        guard canTransfer(items) else { pane.error = "FTP currently transfers individual regular files only. Folder transfers are not implemented yet."; return }
+        queue.enqueue(items, profile: tab.profile, destination: pane.remote ? tab.local.path : tab.remote.path, upload: !pane.remote)
     }
     func drop(_ strings: [String], to pane: PaneModel, directory: String? = nil) -> Bool {
         guard let tab else { return false }
@@ -88,12 +94,12 @@ struct BookmarkActivationGate {
                 guard pane.supportsMutations else { continue }
                 pane.move(entries, to: destination)
             } else {
-                guard tab.profile.transport.supportsTransfers else { continue }
+                guard canTransfer(entries) else { pane.error = ServerProtocol.ftpLimitationsNotice; continue }
                 queue.enqueue(entries, profile: tab.profile, destination: destination, upload: pane.remote)
             }
             accepted = true
         }
-        if !external.isEmpty && tab.profile.transport.supportsTransfers {
+        if !external.isEmpty && canTransfer(Array(external.values)) {
             queue.enqueue(Array(external.values), profile: tab.profile, destination: destination, upload: true)
             accepted = true
         }
@@ -175,7 +181,7 @@ struct RootView: View {
             ToolbarItemGroup {
                 Button { editing = ServerProfile() } label: { Label("New Connection", systemImage: "plus") }.keyboardShortcut("n")
                 Button { workspace.activePane?.refresh() } label: { Label("Refresh", systemImage: "arrow.clockwise") }.keyboardShortcut("r").disabled(workspace.tab == nil)
-                Button { if let pane = workspace.activePane { workspace.transfer(from: pane) } } label: { Label("Transfer", systemImage: "arrow.left.arrow.right") }.keyboardShortcut("t").disabled(!workspace.supportsTransfers || (workspace.activePane?.selected.isEmpty ?? true))
+                Button { if let pane = workspace.activePane { workspace.transfer(from: pane) } } label: { Label("Transfer", systemImage: "arrow.left.arrow.right") }.keyboardShortcut("t").disabled(!workspace.canTransfer(workspace.activePane?.selected ?? []))
                 Button { workspace.showTransfers.toggle() } label: { Label("Transfers", systemImage: "list.bullet.rectangle") }
             }
         }
@@ -213,7 +219,7 @@ struct AppCommands: Commands {
                 .disabled(profiles == nil)
         }
         CommandMenu("Files") {
-            Button("Transfer") { if let w = workspace, let p = w.activePane { w.transfer(from: p) } }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: []).disabled(!(workspace?.supportsTransfers ?? false))
+            Button("Transfer") { if let w = workspace, let p = w.activePane { w.transfer(from: p) } }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: []).disabled(!(workspace?.canTransfer(workspace?.activePane?.selected ?? []) ?? false))
             Button("New Folder…") { NotificationCenter.default.post(name: .paneCommand, object: "folder") }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!(workspace?.activePane?.supportsMutations ?? false))
             Button("Rename…") { NotificationCenter.default.post(name: .paneCommand, object: "rename") }.keyboardShortcut("\r", modifiers: .command).disabled(!(workspace?.activePane?.supportsMutations ?? false))
             Button("Delete…") { NotificationCenter.default.post(name: .paneCommand, object: "delete") }.keyboardShortcut(.delete, modifiers: .command).disabled(!(workspace?.activePane?.supportsMutations ?? false))

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum FTPPaths {
     static func validate(_ path: String) throws {
@@ -19,7 +20,7 @@ enum FTPPaths {
     static func url(profile: ServerProfile, directory: String) throws -> String {
         try profile.validate(); try validate(directory)
         // FTP URL paths are relative to login by default. Encoded leading slash selects root.
-        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/")
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._/")
         let path = directory.hasPrefix("/") ? "%2F" + String(directory.dropFirst()) : directory
         let encoded: String
         if directory.hasPrefix("/") {
@@ -27,6 +28,16 @@ enum FTPPaths {
         } else { encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? "" }
         return "ftp://\(profile.host):\(profile.port.isEmpty ? "21" : profile.port)/\(encoded)" + (encoded.isEmpty || encoded.hasSuffix("/") ? "" : "/")
     }
+    static func fileURL(profile: ServerProfile, path: String) throws -> String {
+        try validate(path)
+        guard !path.isEmpty, !path.hasSuffix("/") else { throw FTPError.message("An FTP file path is required.") }
+        let name = (path as NSString).lastPathComponent
+        try LocalFiles.validName(name)
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._")
+        guard let encoded = name.addingPercentEncoding(withAllowedCharacters: allowed) else { throw FTPError.message("Invalid FTP filename.") }
+        return try url(profile: profile, directory: (path as NSString).deletingLastPathComponent) + encoded
+    }
+
 }
 
 /// RFC 3659 machine-readable directory entries. No locale-dependent LIST guessing.
@@ -100,8 +111,9 @@ private final class FTPDiagnostics: @unchecked Sendable {
 }
 
 /// curl/libcurl owns FTP login, passive data connections, and EPSV/PASV negotiation.
-/// This implementation deliberately offers directory browsing only.
+/// File transfers use the system libcurl API for precise progress and cancellation.
 final class FTPClient: RemoteFileSystem {
+    let transferFeatures = RemoteTransferFeatures(directories: false, unixPermissions: false)
     private let profile: ServerProfile
     private let control: OperationControl
     private var password: String?
@@ -211,14 +223,75 @@ final class FTPClient: RemoteFileSystem {
         // A denied/missing parent listing throws; FTP 550 is never assumed to mean absence.
         return try list((canonical as NSString).deletingLastPathComponent).first { $0.path == canonical }
     }
-    private func unsupported() throws -> Never { throw FTPError.message(ServerProtocol.ftpBrowsingNotice) }
+    private func requireOpen() throws {
+        try control.checkpoint()
+        guard !closed else { throw FTPError.message("The FTP connection has been closed.") }
+    }
+    private func unsupported() throws -> Never { throw FTPError.message(ServerProtocol.ftpLimitationsNotice) }
     func mkdir(_ path: String) throws { try unsupported() }
-    func rename(_ from: String, _ to: String) throws { try unsupported() }
     func createFile(_ path: String) throws { try unsupported() }
     func chmod(_ path: String, mode: UInt32) throws { try unsupported() }
     func delete(_ entries: [FileEntry], progress: (DeletionProgress) -> Void) throws { try unsupported() }
-    func commitUpload(_ temporary: String, to destination: String, requireAtomic: Bool) throws { try unsupported() }
-    func download(_ remote: String, to local: URL, resume: Bool, progress: (UInt64) -> Void) throws { try unsupported() }
-    func upload(_ local: URL, to remote: String, resume: Bool, exclusive: Bool, progress: (UInt64) -> Void) throws { try unsupported() }
     func uploadEditingSnapshot(_ local: URL, to destination: String, permissions: UInt32) throws { try unsupported() }
+
+    private func renameStaging(_ from: String, to: String, overwrite: Bool) throws {
+        try requireOpen(); try FTPPaths.validate(from); try FTPPaths.validate(to)
+        let source = try metadataPath(from), destination = try metadataPath(to)
+        guard source != destination else { throw FTPError.message("FTP staging and destination paths must differ.") }
+        cached = nil
+        guard try stat(source).isRegular else { throw FTPError.message("Only regular FTP staging files can be committed.") }
+        if let existing = try entryIfExists(destination) {
+            guard overwrite && existing.isRegular else { throw FTPError.message("The FTP destination already exists or is not a regular file. The staging file is retained.") }
+        }
+        try FTPCurl.perform(profile: profile, password: password ?? "", url: FTPPaths.url(profile: profile, directory: "/"), control: control,
+                            commands: ["RNFR " + source, "RNTO " + destination])
+    }
+    // FTP has no portable atomic no-replace primitive. Check first; never issue DELE.
+    func rename(_ from: String, _ to: String) throws { try renameStaging(from, to: to, overwrite: false) }
+    func commitUpload(_ temporary: String, to destination: String, requireAtomic: Bool) throws {
+        guard !requireAtomic else { throw FTPError.message("FTP cannot guarantee atomic replacement. The existing file has not been changed.") }
+        try renameStaging(temporary, to: destination, overwrite: true)
+    }
+    func download(_ remote: String, to local: URL, resume: Bool, progress: (UInt64) -> Void) throws {
+        try requireOpen(); try FTPPaths.validate(remote)
+        let entry = try stat(remote)
+        guard entry.isRegular, entry.sizeAvailable else { throw FTPError.message("FTP downloads require a regular file with a reported MLSD size.") }
+        let fd = Darwin.open(local.path, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard fd >= 0 else { throw FTPError.message("Could not safely open the local download file.") }
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true); defer { try? file.close() }
+        var info = Darwin.stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw FTPError.message("The local download destination is not a regular file.") }
+        let offset = resume ? try file.seekToEnd() : 0
+        guard offset <= entry.size else { throw FTPError.message("The local file is larger than the source; resume was cancelled.") }
+        if !resume { try file.truncate(atOffset: 0) }
+        try file.seek(toOffset: offset)
+        // An already complete partial requires no REST request (including empty files).
+        if offset < entry.size || !resume {
+            try FTPCurl.perform(profile: profile, password: password ?? "", url: FTPPaths.fileURL(profile: profile, path: remote), control: control,
+                                file: file, offset: offset, size: entry.size, progress: progress)
+        }
+        try file.synchronize(); progress(entry.size)
+    }
+    func upload(_ local: URL, to remote: String, resume: Bool, exclusive: Bool, progress: (UInt64) -> Void) throws {
+        try requireOpen(); try FTPPaths.validate(remote)
+        guard !exclusive else { throw FTPError.message("FTP does not support guaranteed exclusive creation.") }
+        let fd = Darwin.open(local.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw FTPError.message("Could not safely open the local upload source.") }
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true); defer { try? file.close() }
+        var info = Darwin.stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size >= 0 else { throw FTPError.message("Only regular files can be uploaded over FTP.") }
+        let size = UInt64(info.st_size)
+        cached = nil
+        let existing = try entryIfExists(remote)
+        if let existing {
+            guard resume && existing.isRegular && existing.sizeAvailable else { throw FTPError.message("The FTP upload destination already exists or cannot be resumed safely.") }
+        }
+        let offset = resume ? existing?.size ?? 0 : 0
+        guard offset <= size else { throw FTPError.message("The FTP destination is larger than the source; resume was cancelled.") }
+        if offset < size || existing == nil {
+            try FTPCurl.perform(profile: profile, password: password ?? "", url: FTPPaths.fileURL(profile: profile, path: remote), control: control,
+                                file: file, upload: true, offset: offset, size: size, progress: progress)
+        }
+        progress(size)
+    }
 }

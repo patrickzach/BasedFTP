@@ -24,6 +24,7 @@ struct Packet {
 
 // SFTP v3 framing only. OpenSSH owns encryption, authentication and trust.
 final class SFTPClient: RemoteFileSystem {
+    let transferFeatures = RemoteTransferFeatures(directories: true, unixPermissions: true)
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()

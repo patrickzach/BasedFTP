@@ -7,10 +7,16 @@ struct DeletionProgress: Sendable {
     var text: String { "\(listing ? "Reading directory" : "Deleting"): \(path) · \(removed) \(removed == 1 ? "item" : "items") deleted" }
 }
 
+struct RemoteTransferFeatures {
+    let directories: Bool
+    let unixPermissions: Bool
+}
+
 /// A single remote session, used serially on a worker task, never on the UI actor.
 /// Implementations own protocol details and must propagate connection/permission errors.
 /// Paths are remote POSIX paths. `stat` inspects links rather than following them.
 protocol RemoteFileSystem: AnyObject {
+    var transferFeatures: RemoteTransferFeatures { get }
     func close()
     func realpath(_ path: String) throws -> String
     func stat(_ path: String) throws -> FileEntry
@@ -18,7 +24,7 @@ protocol RemoteFileSystem: AnyObject {
     func entryIfExists(_ path: String) throws -> FileEntry?
     func list(_ path: String) throws -> [FileEntry]
     func mkdir(_ path: String) throws
-    /// Move without silently replacing an existing destination.
+    /// Move after checking for conflicts; FTP cannot guarantee atomic no-replace semantics.
     func rename(_ from: String, _ to: String) throws
     func createFile(_ path: String) throws
     func chmod(_ path: String, mode: UInt32) throws
@@ -45,7 +51,7 @@ extension RemoteFileSystem {
 }
 
 /// The only production entry point for creating remote file sessions.
-/// SFTP is fully supported; FTP is intentionally limited to browsing in this step.
+/// SFTP supports all operations; FTP currently supports browsing and regular file transfers.
 enum RemoteFileSystems {
     static func connect(profile: ServerProfile, control: OperationControl = OperationControl(), knownHosts: URL? = nil) throws -> any RemoteFileSystem {
         switch profile.transport {

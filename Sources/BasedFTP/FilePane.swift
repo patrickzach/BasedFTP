@@ -15,7 +15,7 @@ struct FilePane: View {
                 Label(pane.remote ? "Remote" : "Local", systemImage: pane.remote ? "server.rack" : "laptopcomputer").font(.headline)
                 Spacer()
                 if pane.busy { ProgressView().controlSize(.small); if pane.cancellable { Button { pane.cancel() } label: { Image(systemName: "xmark.circle") }.buttonStyle(.plain).accessibilityLabel("Cancel Operation") } }
-                Button { workspace.transfer(from: pane) } label: { Image(systemName: pane.remote ? "arrow.down.to.line" : "arrow.up.to.line") }.accessibilityLabel(pane.remote ? "Download" : "Upload").help(pane.remote ? "Download Selection" : "Upload Selection").disabled(pane.selected.isEmpty || !workspace.supportsTransfers)
+                Button { workspace.transfer(from: pane) } label: { Image(systemName: pane.remote ? "arrow.down.to.line" : "arrow.up.to.line") }.accessibilityLabel(pane.remote ? "Download" : "Upload").help(pane.remote ? "Download Selection" : "Upload Selection").disabled(!workspace.canTransfer(pane.selected))
                 Menu {
                     Button("New Folder…") { action = .folder }.disabled(!pane.supportsMutations)
                     Button("New File…") { action = .file }.disabled(!pane.supportsMutations)
@@ -44,7 +44,7 @@ struct FilePane: View {
             }
             HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Filter files", text: $pane.filter).textFieldStyle(.plain) }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
             if pane.profile?.transport == .ftp {
-                Text("FTP · Unencrypted · Browsing only").font(.caption).foregroundStyle(.orange)
+                Text("FTP · Unencrypted · File transfers").font(.caption).foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.bottom, 8)
             }
             Divider()
@@ -94,14 +94,17 @@ struct FilePane: View {
         } message: { Text(pane.remote ? "Folders and all their contents will be permanently deleted." : "The files will be moved to the macOS Trash.") }
     }
     private func acceptDrop(_ providers: [NSItemProvider], directory: String) -> Bool {
-        guard !pane.busy, workspace.supportsTransfers else { return false }
+        guard !pane.busy, !pane.remote || workspace.supportsTransfers else { return false }
         var accepted = false
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier), pane.remote, let profile = pane.profile {
                 accepted = true
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let url, let entry = try? LocalFiles.entry(url) else { return }
-                    Task { @MainActor in workspace.queue.enqueue([entry], profile: profile, destination: directory, upload: true) }
+                    Task { @MainActor in
+                        guard workspace.canTransfer([entry]) else { pane.error = ServerProtocol.ftpLimitationsNotice; return }
+                        workspace.queue.enqueue([entry], profile: profile, destination: directory, upload: true)
+                    }
                 }
             } else if provider.canLoadObject(ofClass: NSString.self) {
                 accepted = true
@@ -120,7 +123,7 @@ struct FilePane: View {
         if entry.isDirectory { pane.navigate(entry.path) }
         else if entry.isSymlink { pane.error = "Open symbolic links using an explicit destination path." }
         else if !entry.isRegular { pane.error = "Only regular files can be opened in an application." }
-        else if let profile = pane.profile, !profile.transport.supportsTransfers { pane.error = ServerProtocol.ftpBrowsingNotice }
+        else if let profile = pane.profile, !profile.transport.supportsRemoteEditing { pane.error = ServerProtocol.ftpLimitationsNotice }
         else if let profile = pane.profile { workspace.edits.open(profile: profile, entry: entry, application: application) }
         else {
             Task { do { try await EditorApplications.open(URL(fileURLWithPath: entry.path), application: application) } catch { pane.error = error.localizedDescription } }
@@ -157,7 +160,7 @@ struct QueueView: View {
                 Spacer()
                 Button("Clear Finished") { queue.clearFinished() }
             }.padding(10)
-            if queue.policy == .resume { Text("Resume only when the existing file prefix is identical. SFTP does not verify partial file contents.").font(.caption).foregroundStyle(.orange) }
+            if queue.policy == .resume { Text("Resume only when the existing file prefix is identical. Existing partial contents are not compared.").font(.caption).foregroundStyle(.orange) }
             if queue.jobs.isEmpty { Text("No transfers in the queue").foregroundStyle(.secondary).frame(maxHeight: .infinity) }
             else { ScrollView { LazyVStack(spacing: 0) { ForEach(queue.jobs) { job in TransferRow(job: job, queue: queue) } } } }
         }.background(.background)
@@ -217,7 +220,7 @@ struct StatusBar: View {
     var body: some View {
         HStack {
             Circle().fill(remote.busy ? .orange : remote.error == nil && !remote.entries.isEmpty ? .green : .secondary).frame(width: 6, height: 6)
-            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · \(tab.profile.transport == .sftp ? "SSH / SFTP" : "FTP · Unencrypted · Browsing only")" : "Check Connection")
+            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · \(tab.profile.transport == .sftp ? "SSH / SFTP" : "FTP · Unencrypted · File transfers")" : "Check Connection")
             Spacer(); Text("\(queue.jobs.filter { !$0.terminal }.count) transfers pending")
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 7).background(.bar)
     }

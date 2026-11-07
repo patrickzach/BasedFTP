@@ -192,6 +192,8 @@ final class TransferEngine {
         fileProgress = TransferFileProgress(); reportFiles = files
         defer { reportWarning = { _ in }; reportFiles = { _ in } }
         let fresh = upload ? try LocalFiles.entry(URL(fileURLWithPath: source.path)) : try client.stat(source.path)
+        guard !fresh.isDirectory || client.transferFeatures.directories else { throw FTPError.message("FTP currently transfers individual files only. Folder transfers are not implemented yet.") }
+        guard upload || !fresh.isRegular || fresh.sizeAvailable else { throw FTPError.message("The FTP server did not report this file's size; the download cannot be verified.") }
         let size = try measure(fresh); total = size.bytes; fileProgress.total = size.files
         progress(0, total); reportFiles(fileProgress)
         try transfer(fresh, destination: destination, progress: progress); progress(done, total); reportFiles(fileProgress)
@@ -241,8 +243,8 @@ final class TransferEngine {
                 else { try client.download(source.path, to: URL(fileURLWithPath: target), resume: true, progress: update) }
                 if previous?.partial != nil {
                     if retryPolicy != .overwrite && retryPolicy != .resume, try destinationEntry(destination) != nil { throw FTPError.message("The destination has been created in the meantime. The staging file is retained; please resolve the conflict manually.") }
-                    if upload { try client.chmod(target, mode: source.permissions & 0o777); try client.commitUpload(target, to: destination) }
-                    else { try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: source.permissions & 0o777)], ofItemAtPath: target); guard Darwin.rename(target, destination) == 0 else { throw FTPError.message("Could not commit the resumed staging file.") } }
+                    if upload { if client.transferFeatures.unixPermissions { try client.chmod(target, mode: source.permissions & 0o777) }; try client.commitUpload(target, to: destination) }
+                    else { if source.permissionsAvailable { try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: source.permissions & 0o777)], ofItemAtPath: target) }; guard Darwin.rename(target, destination) == 0 else { throw FTPError.message("Could not commit the resumed staging file.") } }
                 }
             } else {
                 let directory = (destination as NSString).deletingLastPathComponent
@@ -250,13 +252,13 @@ final class TransferEngine {
                 checkpoint.save(source.path, destination: destination, partial: temporary)
                 if upload {
                     try client.upload(URL(fileURLWithPath: source.path), to: temporary, resume: false, progress: update)
-                    try client.chmod(temporary, mode: source.permissions & 0o777)
+                    if client.transferFeatures.unixPermissions { try client.chmod(temporary, mode: source.permissions & 0o777) }
                     if conflict == .overwrite { try client.commitUpload(temporary, to: destination) }
                     else { try client.rename(temporary, destination) }
                 } else {
                     let url = URL(fileURLWithPath: temporary)
                     try client.download(source.path, to: url, resume: false, progress: update)
-                    try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: source.permissions & 0o777)], ofItemAtPath: temporary)
+                    if source.permissionsAvailable { try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: source.permissions & 0o777)], ofItemAtPath: temporary) }
                     if conflict == .overwrite {
                         guard Darwin.rename(temporary, destination) == 0 else { throw FTPError.message("Could not commit the local file: " + String(cString: strerror(errno))) }
                     } else { try FileManager.default.moveItem(atPath: temporary, toPath: destination) }

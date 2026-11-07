@@ -180,9 +180,13 @@ struct FileOutlineView: NSViewRepresentable {
                     let paths = Set(payload.entries.map(\.path))
                     let entries = PaneModel.topLevelSelection(parent.pane.allEntries.filter { paths.contains($0.path) })
                     let destination = (item as? Node)?.entry.path ?? parent.pane.path
-                    guard !entries.isEmpty, (try? PaneModel.validateMove(entries, to: destination)) != nil else { return [] }
+                    guard parent.pane.supportsMutations, !entries.isEmpty, (try? PaneModel.validateMove(entries, to: destination)) != nil else { return [] }
                     return .move
                 }
+                guard let tab = parent.workspace.tabs.first(where: { $0.id == payload.tab }) else { return [] }
+                let source = payload.remote ? tab.remote : tab.local
+                let paths = Set(payload.entries.map(\.path))
+                guard parent.workspace.canTransfer(source.allEntries.filter { paths.contains($0.path) }) else { return [] }
             }
             return parent.workspace.supportsTransfers ? .copy : []
         }
@@ -198,10 +202,10 @@ struct FileOutlineView: NSViewRepresentable {
                 item.target = handler; item.representedObject = handler; item.isEnabled = enabled; menu.addItem(item)
             }
             menu.autoenablesItems = false
-            add(parent.pane.remote ? "Download" : "Upload", enabled: !entries.isEmpty && parent.workspace.supportsTransfers) { self.parent.workspace.transfer(from: self.parent.pane) }
+            add(parent.pane.remote ? "Download" : "Upload", enabled: parent.workspace.canTransfer(entries)) { self.parent.workspace.transfer(from: self.parent.pane) }
             if entries.count == 1, let entry = entries.first {
-                add(entry.isDirectory ? "Open" : self.parent.pane.remote ? "Edit Remote File" : "Open", enabled: entry.isDirectory || !parent.pane.remote || parent.workspace.supportsTransfers) { self.parent.open(entry) }
-                if entry.isRegular && (!parent.pane.remote || parent.workspace.supportsTransfers) {
+                add(entry.isDirectory ? "Open" : self.parent.pane.remote ? "Edit Remote File" : "Open", enabled: entry.isDirectory || !parent.pane.remote || (parent.pane.profile?.transport.supportsRemoteEditing ?? false)) { self.parent.open(entry) }
+                if entry.isRegular && (!parent.pane.remote || (parent.pane.profile?.transport.supportsRemoteEditing ?? false)) {
                     let item = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
                     item.submenu = EditorApplications.menu(for: entry) { app in self.parent.openWith(entry, app) }
                     menu.addItem(item)
