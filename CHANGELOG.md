@@ -1,111 +1,139 @@
 # Changelog
 
-Alle bisher umgesetzten Funktionen und Verbesserungen von BasedFTP. Der initiale Commit fasst die bisherigen Entwicklungsschritte zusammen; sie werden nicht nachträglich als separate Commits dargestellt.
+All features and improvements implemented in BasedFTP so far. The initial commit combines the preceding development steps; they are not retroactively represented as separate commits.
+
+## [Unreleased]
+
+### Added
+
+- Universal app for Apple Silicon (`arm64`) and Intel (`x86_64`), requiring macOS 14 or later. The build script compiles both variants separately, combines them using `lipo`, and signs/verifies the combined bundle. The Xcode project is also configured for both architectures.
+- Open remote files directly in an editor after a background download, without an intermediate Finder step or modal upload dialog.
+- Native Open With application selection, an application picker, and per-extension BasedFTP defaults without changing global macOS associations.
+- Automatic remote uploads on save, detection of atomic editor saves, and visible status rows for multiple editing sessions.
+- Immutable SHA256 snapshots and debounced file monitoring; serialized uploads use the latest pending version, including reverted changes.
+- Remote editing replaces files exclusively through atomic operations after the complete upload has been acknowledged. Servers without the required extension are rejected without a destructive fallback. Intervening server content changes are overwritten without prompting.
+- Retention of local working copies and failed snapshots, manual retry using the latest version, and explicit monitoring termination.
+- Tests for rapid and reverted saves, failures and retries, immutable snapshots, application preferences, atomic SFTP replacement, and automatic saving through an isolated SSH test server.
+- Per-transfer file counters showing “x of y files transferred”, remaining files, and separate counts for files skipped because of conflicts. Empty files count; directories, links, and special files do not count as transferred files.
+- Readable estimated remaining time in days, hours, minutes, and seconds, such as “10 minutes and 5 seconds” instead of “605 s”.
+- Tests for time formatting, upload/download file counts, empty files, and correct skipped-file counts when resuming.
+
+### Changed
+
+- Converted all app-owned interface text to English by default: menus, dialogs, status indicators, file counters, remaining times, and errors. The app bundle and Xcode project declare English as the development language.
+- Moved SSH host import from the sidebar to **Connections → Import from SSH Configuration**.
+- Recursive remote deletion uses up to 16 outstanding delete requests instead of waiting for an individual response per entry. Parent directories are removed only after their children are confirmed deleted.
+- Deletion shows the current path and acknowledged deletion count. Errors identify the affected path; cancellation reports entries already deleted.
+- Added tests for pipelined recursive deletion, progress, cancellation, permission errors, and symlinks that must not be followed.
+- Symbolic links and special files are individually skipped during uploads/downloads instead of failing the entire transfer during preflight. Link targets are not followed.
+- The transfer queue shows warning counts and an expandable list of full source paths. Successful jobs with omitted entries display **Completed with Warnings**.
+- Skipped links and special files are excluded from total byte progress; warnings from preflight and transfer are deduplicated.
+- Added regression tests for recursive uploads/downloads with regular files, broken links, link loops, and a FIFO special file. Other file/connection errors remain failures.
 
 ## [0.1.0] – 2026-11-07
 
-Erster lokal startbarer Entwicklungsstand für macOS 14 und neuer. Noch keine notarisiert veröffentlichte oder umfassend produktionsgehärtete Version.
+First locally runnable development version for macOS 14 and later. Not yet a notarized release or a comprehensively production-hardened version.
 
-### Hinzugefügt
+### Added
 
-#### Native Anwendung und Projekt
+#### Native application and project
 
-- Native SwiftUI-Anwendung mit AppKit, modularen ViewModels und asynchroner Datei-I/O.
-- Xcode-Projekt mit gemeinsamem Scheme und XCTest-Target sowie ein Swift Package für dieselben Quellen.
-- Unterstützung für systemgesteuerten Dark und Light Mode, SF Symbols, Toolbar, Sidebar und Statusleiste.
-- Eigenes App-Icon mit reproduzierbarer AppKit-Zeichenvorlage und Icon-Ressourcen.
-- Skripte zum Erzeugen des Xcode-Projekts, Bauen eines lokal signierten App-Bundles und Ausführen der Tests.
-- README mit Build-Anleitung, Bedienung, Architekturentscheidungen und bekannten Einschränkungen sowie separater Verifikationsbericht.
-- Lokales Git-Repository, initialer Commit und dieser Changelog.
+- Native SwiftUI application with AppKit, modular view models, and asynchronous file I/O.
+- Xcode project with a shared scheme and XCTest target, plus a Swift package using the same sources.
+- System-controlled Dark and Light Mode, SF Symbols, toolbar, sidebar, and status bar.
+- Custom app icon with a reproducible AppKit drawing template and icon resources.
+- Scripts for generating the Xcode project, building a locally signed app bundle, and running tests.
+- README covering builds, usage, architectural decisions, and known limitations, plus a separate validation report.
+- Local Git repository, initial commit, and this changelog.
 
-#### Dateibrowser und Navigation
+#### File browser and navigation
 
-- Zwei unabhängig navigierbare Panels für lokale und entfernte Dateien mit verschiebbarem Divider.
-- Pfadeingabe, Breadcrumbs, Elternverzeichnis, Zurück/Vorwärts und Öffnen per Doppelklick.
-- Native NSOutlineView-Baumansicht in beiden Panels mit aufklappbaren Ordnern und mehreren Hierarchieebenen.
-- Asynchrones Nachladen von Unterordnern; Wiederherstellung offener Zweige beim Aktualisieren.
-- Native Mehrfachauswahl und Pfeiltastenbedienung für die Baumstruktur.
-- Anzeige von Name, Größe, Typ, Änderungsdatum und oktalen Dateirechten.
-- Sortierung über Spaltenköpfe und Panel-Menü, aufsteigende/absteigende Reihenfolge.
-- Anzeige versteckter Dateien und Filterung nach Dateinamen; passende geladene Kinder bleiben mit ihren Vorfahren sichtbar.
-- Kontextmenüs und Tastaturkürzel für typische Dateioperationen.
+- Two independently navigable panels for local and remote files with a movable divider.
+- Path entry, breadcrumbs, parent navigation, back/forward, and double-click opening.
+- Native NSOutlineView trees in both panels with expandable folders and multiple hierarchy levels.
+- Asynchronous loading of subfolders; expanded branches restored on refresh.
+- Native multiple selection and arrow-key tree navigation.
+- Display of name, size, type, modification date, and octal permissions.
+- Sorting through column headers and the panel menu, in ascending or descending order.
+- Hidden-file display and filename filtering; matching loaded children remain visible with their ancestors.
+- Context menus and keyboard shortcuts for common file operations.
 
-#### SSH, SFTP und Sicherheit
+#### SSH, SFTP, and security
 
-- SSH-Transport über das mit macOS ausgelieferte OpenSSH, ohne externe Paketabhängigkeiten oder eigene SSH-Kryptografie.
-- Binärer SFTP-v3-Client mit Antwort-ID-Prüfung und begrenzten Paketgrößen, ohne Parsen von Terminal-Dateilistings.
-- Verzeichnislisting, Pfadauflösung, Dateimetadaten, Lesen, Schreiben, Erstellen, Umbenennen, Löschen und chmod.
-- Passwort- und SSH-Key-Authentifizierung über OpenSSH; Unterstützung für Ed25519, RSA, ECDSA und SSH-Agent.
-- Schlüsselbund-Anbindung für Passwörter und Key-Passphrasen über einen kurzlebigen ASKPASS-Unterprozess.
-- Verwendung bestehender SSH-Konfigurationen, individueller Ports und privater Schlüssel an ihrem vorhandenen Speicherort.
-- Strikte Host-Key-Verifikation mit `known_hosts`; keine automatische Annahme unbekannter oder geänderter Schlüssel.
-- Dialog zum Abgleich von SHA256-Fingerprints und ausdrücklich bestätigten Hinzufügen neuer Host-Keys.
-- Verbindungs- und Inaktivitätszeitlimits, SSH-Keepalives, aussagekräftige Fehlermeldungen und erneutes Verbinden.
-- Validierung von Host, Port und Dateinamen; Unterstützung von UTF-8-Dateinamen einschließlich Leerzeichen, Anführungszeichen und Zeilenumbrüchen.
-- Keine Telemetrie, Werbung, Accounts oder kostenpflichtigen Dienste.
+- SSH transport through macOS system OpenSSH, without external package dependencies or custom SSH cryptography.
+- Binary SFTP v3 client with response ID checks and bounded packet sizes, without parsing terminal directory listings.
+- Directory listing, path resolution, file metadata, reading, writing, creation, renaming, deletion, and chmod.
+- Password and SSH key authentication through OpenSSH; Ed25519, RSA, ECDSA, and SSH agent support.
+- Keychain integration for passwords and key passphrases through a short-lived ASKPASS subprocess.
+- Existing SSH configuration, custom ports, and private keys at their existing locations.
+- Strict host-key verification using `known_hosts`; no automatic acceptance of unknown or changed keys.
+- Dialog for comparing SHA256 fingerprints and explicitly confirming new host keys.
+- Connection and inactivity timeouts, SSH keepalives, explanatory errors, and reconnection.
+- Host, port, and filename validation; UTF-8 filenames including spaces, quotes, and newlines.
+- No telemetry, advertising, accounts, or paid services.
 
-#### Transfers und Dateioperationen
+#### Transfers and file operations
 
-- Upload und Download einzelner Dateien sowie rekursiver Ordnerstrukturen.
-- Warteschlange mit konfigurierbarer Begrenzung auf 1–8 parallele Jobs.
-- Fortschritt, durchschnittliche Geschwindigkeit, geschätzte Restzeit und Status pro Job.
-- Pause, Weiterlaufen, Abbrechen, erneuter Versuch und explizites Fortsetzen unterbrochener Transfers.
-- Konfliktstrategien Überspringen, Umbenennen, Überschreiben und Fortsetzen; Umbenennen als Standard.
-- 64-KiB-Blöcke mit bis zu acht gleichzeitig ausstehenden Anfragen; Behandlung vertauschter Antworten und kurzer Leseantworten.
-- Übertragung in eindeutig benannte Arbeitsdateien vor Übernahme am endgültigen Ziel; Unterstützung von OpenSSH-POSIX-Rename.
-- Fortsetzungsinformationen während der laufenden App-Sitzung für Arbeitsdateien und bereits abgeschlossene Dateien.
-- Dateien und Ordner erstellen, umbenennen, verschieben und löschen sowie Dateirechte ändern.
-- Lokales Löschen über den Papierkorb; bestätigtes, endgültiges rekursives Löschen auf dem Server.
-- Remote-Dateien temporär herunterladen, im zugeordneten macOS-Editor öffnen und ausdrücklich wieder hochladen; Konfliktprüfung anhand Größe und Änderungszeit.
+- Upload/download of individual files and recursive directory trees.
+- Queue with a configurable limit of 1–8 parallel jobs.
+- Per-job progress, average speed, estimated remaining time, and status.
+- Pause, continue, cancel, retry, and explicit resumption of interrupted transfers.
+- Skip, Rename, Overwrite, and Resume conflict strategies; Rename by default.
+- 64 KiB blocks with up to eight outstanding requests; handling of reordered responses and short reads.
+- Transfer into uniquely named staging files before committing to the final destination; OpenSSH POSIX rename support.
+- In-session resume information for staging files and completed files.
+- File/folder creation, renaming, moving, deletion, and permission changes.
+- Local deletion through Trash; confirmed, permanent recursive server deletion.
+- Temporary download of remote files, opening in the associated macOS editor, and explicit re-upload; conflict checks using size and modification time.
 
 #### Drag & Drop
 
-- Upload und Download zwischen den Panels, auch direkt in einen Zielordner.
-- Tatsächliches Verschieben innerhalb des lokalen beziehungsweise entfernten Panels.
-- Native Drop-Ziele auf vollständigen Ordnerzeilen, Breadcrumbs und der freien Verzeichnisfläche.
-- Native Hervorhebung des Drop-Ziels und Unterscheidung zwischen Verschieben und Übertragen.
-- Mehrfachauswahl mit Zusammenfassung doppelter Drag-Payloads und überlappender Eltern-/Kind-Auswahlen.
-- Prüfung vorhandener Ziele vor dem Verschieben; kein stillschweigendes Überschreiben.
-- Schutz gegen Verschieben eines Ordners in sich selbst oder einen Unterordner, einschließlich kanonischer Pfadauflösung.
-- Uploads aus dem Finder in das Remote-Panel.
+- Upload/download between panels, including directly into a destination folder.
+- Actual moves within the local or remote panel.
+- Native drop targets covering entire folder rows, breadcrumbs, and empty directory space.
+- Native destination highlighting and distinction between moving and transferring.
+- Multiple selection with deduplication of drag payloads and overlapping parent/child selections.
+- Existing-destination checks before moves; no silent overwriting.
+- Protection against moving a folder into itself or a descendant, including canonical path resolution.
+- Uploads from Finder into the remote panel.
 
-#### Verbindungen und Lesezeichen
+#### Connections and bookmarks
 
-- Gespeicherte Serverprofile, Favoriten und zuletzt verwendete Verbindungen.
-- Mehrere gleichzeitige Verbindungen in Tabs und ungespeicherte Schnellverbindungen.
-- Verbindungstest und Import expliziter SSH-Host-Aliase aus der Hauptkonfigurationsdatei.
-- Öffnen von Lesezeichen per Einfach- und Doppelklick; ein Doppelklick erzeugt genau einen Tab.
-- Anklickbare gesamte Lesezeichenzeilen.
-- ⌘W schließt den aktiven Verbindungstab; nach dem letzten Tab bleibt die Startansicht im Fenster erhalten.
-- ⇧⌘W schließt das ganze Fenster; nach dem Schließen eines Tabs wird der benachbarte Tab ausgewählt.
+- Saved server profiles, favorites, and recent connections.
+- Multiple simultaneous connections in tabs and unsaved quick connections.
+- Connection testing and import of explicit SSH host aliases from the main configuration file.
+- Single- and double-click bookmark opening; double clicks create exactly one tab.
+- Entire bookmark rows are clickable.
+- ⌘W closes the active connection tab; closing the last tab retains the welcome screen in the window.
+- ⇧⌘W closes the entire window; closing a tab selects its neighbor.
 
 #### Tests
 
-- Unit-Tests für Paketframing, Navigation, Eingabevalidierung, Lesezeichen-Aktivierung und Tab-Schließen.
-- Tests gegen den realen lokalen OpenSSH-SFTP-Subsystemserver für Dateioperationen, rekursive Transfers, Konflikte, Abbruch und Fortsetzen.
-- Protokoll-Testfixture für vertauschte Antworten und kurze Leseantworten, ausschließlich für Tests.
-- Tests der Baumansicht-ViewModels für Aufklappen, Filter, Aktualisierung, verschachteltes Umbenennen und sichere Verschiebeoperationen.
-- Isolierter Loopback-SSH-Testserver mit eigenen temporären Schlüsseln und eigener `known_hosts`.
-- SSH-Integrationstests für Ed25519, RSA, ECDSA, einen verschlüsselten Key über einen separaten Agent sowie Ablehnung unbekannter und geänderter Host-Keys.
+- Unit tests for packet framing, navigation, input validation, bookmark activation, and tab closing.
+- Tests against the real local OpenSSH SFTP subsystem server for file operations, recursive transfers, conflicts, cancellation, and resumption.
+- Protocol fixture for reordered responses and short reads, used only in tests.
+- Tree view-model tests for expansion, filtering, refresh, nested renaming, and safe moves.
+- Isolated loopback SSH test server with dedicated temporary keys and `known_hosts`.
+- SSH integration tests for Ed25519, RSA, ECDSA, an encrypted key through a separate agent, and rejection of unknown/changed host keys.
 
-### Behoben und verbessert
+### Fixed and improved
 
-- Zellbasierte SwiftUI-Drops durch native NSOutlineView-Drop-Delegates ersetzt, damit Drops zuverlässig im Zielordner ankommen.
-- Umbenennen aufgeklappter Untereinträge verwendet deren tatsächliches Elternverzeichnis.
-- Dateinavigation berücksichtigt kanonische lokale Pfade; Baum-Einrückung folgt der geladenen Hierarchie.
-- Schutz vor veralteten Navigationsergebnissen sowie Abbruch laufender SSH-Operationen und Aufräumen beim Beenden.
-- Bestätigte Datei-Handleschließung nach Transfers, damit verspätete Serverfehler nicht als Erfolg erscheinen.
-- Erhalt vorhandener Zieldateien bei abgebrochenen Übertragungen in Arbeitsdateien und Beibehaltung der ursprünglichen Konfliktstrategie beim Fortsetzen.
-- Acht Punkte zusätzlicher Abstand zwischen Drei-Punkte-Symbol und Menüpfeil in beiden Panels.
-- Bisheriges ⌘W-Verhalten zum Schließen des Fensters durch gezieltes Schließen des aktiven Tabs ersetzt.
-- Doppelklick-Aktivierungen zusammengefasst, um versehentlich doppelte Verbindungstabs zu verhindern.
+- Replaced cell-based SwiftUI drops with native NSOutlineView drop delegates so drops reliably reach the destination folder.
+- Renaming expanded child entries uses their actual parent directory.
+- File navigation respects canonical local paths; tree indentation follows the loaded hierarchy.
+- Protection against stale navigation results, cancellation of active SSH operations, and cleanup on exit.
+- Acknowledged file-handle closure after transfers prevents late server errors from appearing as success.
+- Existing destination files remain intact when staged transfers are canceled; resumption retains the original conflict strategy.
+- Eight additional points of spacing between the ellipsis icon and menu arrow in both panels.
+- Replaced the previous window-closing ⌘W behavior with active-tab closing.
+- Coalesced double-click activations to prevent accidental duplicate connection tabs.
 
-### Bekannte Grenzen und Verifikation
+### Known limitations and validation
 
-- Details zu tatsächlich ausgeführten Builds, Tests und visuellen Prüfungen stehen in [VALIDATION.md](VALIDATION.md).
-- Der Release-Build über SwiftPM und das lokal signierte App-Bundle wurden erfolgreich gebaut und gestartet. Der direkte Xcode-Build war durch ein defektes Plugin der lokalen Xcode-Installation blockiert.
-- Passwort-/Keychain-ASKPASS-Authentifizierung ist implementiert, aber noch nicht vollständig mit einem interaktiven Testkonto end-to-end verifiziert.
-- Queue und offene Tabs werden noch nicht über App-Neustarts hinweg wiederhergestellt.
-- Symlinks und Spezialdateien werden bei Transfers ausdrücklich abgelehnt; Remote-Drag-Export in den Finder fehlt.
-- Fortsetzen setzt identische vorhandene Teilinhalte voraus; Remote-Bearbeiten bietet keinen atomaren Versionsvergleich.
-- Noch keine Verzeichnissynchronisierung, kein Verzeichnisvergleich, keine Bandbreitenbegrenzung oder Notarisierung. Weitere Grenzen sind im [README](README.md) dokumentiert.
+- See [VALIDATION.md](VALIDATION.md) for builds, tests, and visual checks actually performed.
+- The SwiftPM release build and locally signed app bundle were built and launched successfully. Direct Xcode building was blocked by a broken plugin in the local Xcode installation.
+- Password/Keychain ASKPASS authentication is implemented but has not yet been fully verified end to end with an interactive test account.
+- The queue and open tabs are not yet restored across app restarts.
+- At this version, symlinks and special files are explicitly rejected during transfers; remote drag export to Finder is missing.
+- Resumption assumes identical existing partial contents; remote editing does not provide atomic version comparison.
+- No directory synchronization, directory comparison, bandwidth limiting, or notarization yet. Further limitations are documented in the [README](README.md).

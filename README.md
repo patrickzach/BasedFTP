@@ -1,79 +1,90 @@
 # BasedFTP
 
-Native macOS-SFTP-Anwendung mit SwiftUI und AppKit, ab macOS 14. Keine Paketabhängigkeiten, Accounts, Werbung oder Telemetrie. Der aktuelle Stand ist eine benutzbare erste Version, keine bereits umfassend gehärtete 1.0.
+A native macOS SFTP application built with SwiftUI and AppKit, requiring macOS 14 or later. No package dependencies, accounts, advertising, or telemetry. The current release is a usable first version, not yet a thoroughly hardened 1.0.
 
-Die bisherigen Funktionen und Verbesserungen sind im [Changelog](CHANGELOG.md) zusammengefasst.
+Features and improvements are documented in the [Changelog](CHANGELOG.md).
 
-## Starten und bauen
+## Interface language
 
-Voraussetzung: Xcode mit macOS-SDK und Swift 6 oder neuer. Apple Silicon wurde hier getestet; Intel ist als Quellcodeziel vorgesehen, aber nicht auf Hardware geprüft.
+BasedFTP defaults to English, including on Macs configured in German. App menus, dialogs, status indicators, and error messages are in English. Date and number formats, as well as operating system or server messages, may still follow their respective regional settings or language. Saved profile names and filenames remain unchanged. A separate German localization is not currently included.
 
-- `BasedFTP.xcodeproj` öffnen, Scheme **BasedFTP**, Ziel **My Mac**, Run.
-- Alternativ: `bash Scripts/build-app.sh`. Das erzeugt `build/BasedFTP.app` mit lokaler Ad-hoc-Signatur. Die App anschließend im Finder starten.
-- `bash Scripts/test.sh` führt Unit- und lokale SFTP-Subsystemtests aus.
-- `bash Scripts/integration-test.sh` startet zusätzlich einen temporären SSH-Server **nur auf 127.0.0.1** mit zufälligem Port und eigenen Schlüsseln. Es werden keine System- oder Benutzer-SSH-Einstellungen geändert. Erforderlich: `/usr/sbin/sshd`, `/usr/libexec/sftp-server`, Python 3 und freigegebener Loopback-Netzwerkzugriff. Testdateien und Agent werden am Ende entfernt.
+## Building and running
 
-Die Projektdatei wird ohne zusätzliche Tools mit `python3 Scripts/generate-project.py` reproduziert. Swift Package und Xcode verwenden dieselben Quelldateien. Das Build-Skript ist auch eine Alternative, wenn die lokale Xcode-IDE-Installation defekt ist.
+Requirements: Xcode with the macOS SDK and Swift 6 or later. The build script produces a universal app for Apple Silicon (`arm64`) and Intel (`x86_64`). Both variants have compiled successfully; the app has not yet been tested on Intel hardware.
 
-## Erste Verbindung
+- Open `BasedFTP.xcodeproj`, select the **BasedFTP** scheme and **My Mac** destination, then run.
+- Alternatively, run `bash Scripts/build-app.sh`. This creates `build/BasedFTP.app` as a universal bundle (`arm64` + `x86_64`) with a local ad hoc signature. Both architectures require macOS 14 or later. Launch the app in Finder afterward.
+- `bash Scripts/test.sh` runs unit tests and local SFTP subsystem tests.
+- `bash Scripts/integration-test.sh` additionally starts a temporary SSH server **bound only to 127.0.0.1**, using a random port and dedicated keys. It does not change system or user SSH settings. Requirements: `/usr/sbin/sshd`, `/usr/libexec/sftp-server`, Python 3, and permission to access the loopback network. Test files and the agent are removed afterward.
 
-1. Server hinzufügen. Als Host sind DNS-Name, IPv4-Adresse oder ein Alias aus `~/.ssh/config` möglich. Für IPv6 aktuell einen SSH-Alias verwenden. Benutzer und Port dürfen leer bleiben, damit OpenSSH die Konfiguration übernimmt.
-2. SSH-Key auswählen oder den vorhandenen SSH-Agent verwenden. Ed25519, RSA mit modernen Signaturen und ECDSA werden durch OpenSSH verarbeitet. Passphrasegeschützte Keys können über den Agent oder die Schlüsselbund-Passphrase entsperrt werden.
-3. Für Passwortanmeldung das Passwort eingeben und die Schlüsselbund-Option eingeschaltet lassen. Eingegebene Geheimnisse aktivieren diese Option sichtbar. Zum Löschen eines gespeicherten Geheimnisses das Feld leeren und die Ersetzen-Option einschalten. Bestehende Geheimnisse werden sonst nicht verändert.
-4. Bei unbekanntem Host **Host-Key prüfen…** wählen. Alle angebotenen SHA256-Fingerprints unabhängig mit dem Administrator abgleichen und ausdrücklich bestätigen. `ssh-keyscan` allein stellt kein Vertrauen her. Bereits bekannte Schlüssel werden hier niemals ersetzt. Geänderte Schlüssel führen zum Abbruch.
-5. Verbindung testen und verbinden. Für eine schnelle Verbindung kann „Serverprofil speichern“ ausgeschaltet werden.
+Regenerate the project without additional tools using `python3 Scripts/generate-project.py`. The Swift package and Xcode project use the same source files. The build script also provides an alternative if the local Xcode IDE installation is broken.
 
-Bei ProxyJump/ProxyCommand die Host-Keys einmal mit dem normalen OpenSSH-Client im Terminal verifizieren. Die anschließenden SFTP-Verbindungen unterstützen diese Konfiguration über OpenSSH. Der Import zeigt explizite Host-Aliase aus der Hauptdatei; Include-Dateien und Wildcards werden beim Import nicht aufgeklappt, bei einer Verbindung jedoch von OpenSSH normal ausgewertet.
+## First connection
 
-## Bedienung
+1. Add a server. The host can be a DNS name, IPv4 address, or alias from `~/.ssh/config`. For IPv6, use an SSH alias for now. Leave the username and port blank to use the OpenSSH configuration.
+2. Select an SSH key or use your existing SSH agent. OpenSSH handles Ed25519, RSA with modern signatures, and ECDSA. Passphrase-protected keys can be unlocked through the agent or a passphrase stored in Keychain.
+3. For password authentication, enter the password and leave the Keychain option enabled. Entering a secret visibly enables this option. To delete a stored secret, clear the field and enable the replacement option. Existing secrets are otherwise left unchanged.
+4. For an unknown host, use the host-key verification action. Independently compare every offered SHA256 fingerprint with the administrator and explicitly confirm it. `ssh-keyscan` alone does not establish trust. Existing keys are never replaced here. Changed keys cause the connection to fail.
+5. Test the connection, then connect. For a quick connection, turn off **Save server profile**.
 
-- Gespeicherte Server und zuletzt verwendete Verbindungen öffnen per Einfach- oder Doppelklick. Ein Doppelklick erzeugt genau einen Tab. Die gesamte Lesezeichenzeile ist anklickbar.
-- **⌘W** schließt den aktiven Verbindungstab; nach dem letzten Tab bleibt das Fenster mit der Startansicht offen. **⇧⌘W** schließt das ganze Fenster.
+For ProxyJump/ProxyCommand, verify host keys once using the standard OpenSSH client in Terminal. Subsequent SFTP connections support this configuration through OpenSSH. Import is available under **Connections → Import from SSH Configuration** and lists explicit host aliases from the main configuration file. Include files and wildcards are not expanded during import, but OpenSSH evaluates them normally when connecting.
 
-- Zwei unabhängig navigierbare Dateipanels mit verschiebbarem Divider, Pfadeingabe, Breadcrumbs, Zurück/Vorwärts und Doppelklick. Beide Panels verwenden eine native NSOutlineView-Baumansicht: Ordner über den Pfeil aufklappen, Unterordner werden asynchron nachgeladen. Rechte/Linke Pfeiltaste klappt die Auswahl auf/zu. Beim Aktualisieren bleiben offene Zweige erhalten.
-- Mehrfachauswahl über die nativen Tabellen. Name, Größe, Typ, Änderungszeit und oktale Rechte sind sichtbar. Sortierfeld und Richtung über die Spaltenköpfe oder im Panel-Menü wählen. Ein Suchfeld filtert das aktuelle Verzeichnis lokal nach Dateinamen.
-- Upload/Download über Panel-Button, Toolbar, Kontextmenü, **⌘T** oder **F5**. Dateien und Ordner zwischen den Panels ziehen. Auf einen Zielordner fallenlassen, um direkt dort hoch-/herunterzuladen. Innerhalb desselben Panels bedeutet Drag & Drop **Verschieben**: auf Ordnerzeilen (auch eingeklappte), Breadcrumbs oder die freie Fläche für das aktuelle Verzeichnis. Bestehende Ziele werden beim Verschieben nicht überschrieben; Selbst-/Unterordner-Ziele werden abgelehnt. Mehrfach ausgewählte Ordner und ihre Kinder werden gemeinsam nur einmal verschoben. Aus dem Finder sind Uploads in das Remote-Panel möglich. Export per Drag & Drop aus dem Remote-Panel in den Finder ist noch nicht implementiert.
-- **⌘R** aktualisiert das aktive Panel, **⌘↑** öffnet das Elternverzeichnis, **⌘[ / ⌘]** navigiert zurück/vorwärts, **⇧⌘.** blendet versteckte Dateien ein/aus, **⇧⌘N** erstellt Ordner, **⌘Return** benennt die Auswahl um, **⌘⌫** öffnet die Löschbestätigung. Das aktive Panel wird durch Auswahl/Klick bestimmt.
-- Kontextmenüs für neue Dateien/Ordner, Umbenennen, Verschieben in einen absoluten Zielordner, chmod und Löschen. Lokal wird der Papierkorb benutzt; Remote-Löschen ist nach Bestätigung endgültig und rekursiv.
-- Die Transferansicht konfiguriert 1–8 parallele Jobs und die Konfliktstrategie für **neu hinzugefügte** Jobs. Standard: Umbenennen. Überschreiben, Überspringen und explizites Fortsetzen stehen zur Verfügung.
-- Pause hält den jeweiligen lokalen SSH-Prozess an; Fortsetzen setzt ihn fort. Sehr lange Pausen können serverseitige Timeouts verursachen. Abbrechen beendet diesen Prozess. Erneut startet einen neuen Job mit derselben Strategie. Fortsetzen am fehlgeschlagenen/abgebrochenen Job verwendet dessen erhaltene Arbeitsdateien und merkt sich bereits abgeschlossene Dateien, solange die App geöffnet bleibt.
-- Remote-Datei öffnen: Arbeitskopie herunterladen, im macOS-Standardeditor bearbeiten, dort speichern und im geöffneten Bearbeitungsdialog ausdrücklich hochladen. Änderungen auf dem Server werden anhand Größe und Änderungszeit erkannt. Bei Konflikten bleibt die lokale Kopie erhalten.
+## Usage
 
-## Architektur und technische Entscheidungen
+- Open saved servers and recent connections with a single or double click. A double click creates exactly one tab. The entire bookmark row is clickable.
+- **⌘W** closes the active connection tab. After the last tab closes, the window remains open with the welcome screen. **⇧⌘W** closes the entire window.
+- Two independently navigable file panels provide a movable divider, path entry, breadcrumbs, back/forward navigation, and double-click opening. Both use native NSOutlineView trees: expand folders using their disclosure arrows, with subfolders loaded asynchronously. Right/Left Arrow expands or collapses the selection. Refreshing preserves expanded branches.
+- Native tables support multiple selection. Name, size, type, modification time, and octal permissions are visible. Select the sort field and direction using column headers or the panel menu. A search field filters the current directory locally by filename.
+- Upload/download using panel buttons, the toolbar, context menus, **⌘T**, or **F5**. Drag files and folders between panels. Drop onto a destination folder to transfer directly into it. Dragging within the same panel **moves** items: drop onto folder rows, including collapsed folders, breadcrumbs, or empty space for the current directory. Moves never overwrite existing destinations; moving into the source itself or a descendant is rejected. Selected folders and their children are moved only once. Uploads from Finder into the remote panel are supported. Dragging remote files out to Finder is not yet implemented.
+- **⌘R** refreshes the active panel, **⌘↑** opens its parent directory, **⌘[ / ⌘]** navigates back/forward, **⇧⌘.** toggles hidden files, **⇧⌘N** creates a folder, **⌘Return** renames the selection, and **⌘⌫** opens delete confirmation. Clicking or selecting determines the active panel.
+- Context menus provide file/folder creation, renaming, moving to an absolute destination directory, chmod, and deletion. Local deletion uses Trash; confirmed remote deletion is permanent and recursive. Up to 16 independent delete requests can be in flight; parent folders are removed only after their children. The panel shows the current path and number of acknowledged deletions. Cancellation cannot restore entries already removed.
+- Each transfer shows “x of y files transferred” and the remaining file count. Files skipped because of conflicts are listed separately. Empty files count; directories and skipped links/special files do not. Estimated remaining time uses days, hours, minutes, and seconds, such as “10 minutes and 5 seconds”. The transfer view configures 1–8 parallel jobs and the conflict strategy for **newly added** jobs. The default is Rename. Overwrite, Skip, and explicit Resume are also available.
+- Pause suspends the job's local SSH process; continuing resumes it. Long pauses may cause server timeouts. Cancel terminates that process. Retry starts a new job with the same strategy. Resuming a failed/canceled job uses its retained staging files and remembers completed files while the app remains open.
+- Double-click a remote file or choose **Edit Remote File**: BasedFTP downloads it in the background and opens it directly in the preferred application. No Finder detour or modal editing dialog is required.
+- Right-click → **Open With** lists suitable installed applications and **Other Application…**. **Always Open With** saves a per-extension association, such as `.html` → VS Code. This applies only to BasedFTP, including local files; it does not change macOS/Finder defaults. **Use macOS Default** removes the BasedFTP association.
+- **Simply save in your editor:** the app monitors the working copy and automatically uploads changes. The remote editing area shows monitoring, upload, success, or error status. Multiple edited files have separate working copies; reopening the same remote file in the same workspace reuses its active session.
+- Uploads run sequentially from immutable snapshots. If you save again during an upload, the latest stable version is uploaded afterward. Intervening server changes are deliberately overwritten without a conflict prompt.
+- Upload failures retain the edited working copy and failed snapshots. **Try Again** uses the latest local version. **Working Copy** reveals the file in Finder for recovery. **Stop** disables automatic uploading without deleting the local file.
 
-- `Models.swift`: Profile, Dateimetadaten, Navigation und Konfliktstrategien.
-- `SFTP.swift`: Binäres SFTP-v3-Framing und Dateibefehle über stdin/stdout von `/usr/bin/ssh -s … sftp`. Keine Shell-Befehlsketten, kein Parsen von `ls`, keine selbst implementierte SSH-Kryptografie.
-- `FileSystem.swift`: Lokale Dateizugriffe und asynchrone Panel-ViewModels mit Schutz gegen veraltete Navigationsergebnisse.
-- `Transfers.swift`: Begrenzte parallele Queue, rekursive Übertragung, Konflikte, Fortschritt, durchschnittliche Geschwindigkeit und geschätzte Restzeit.
-- `Security.swift`: macOS Keychain und geheimnisfreie JSON-Profile in `~/Library/Application Support/BasedFTP/profiles.json`.
-- `FileOutlineView.swift`: Native AppKit-Baumansicht mit Auswahl, Drag-Quellen, zeilenbezogenen Drop-Zielen, Spaltensortierung und Kontextmenüs.
-- `Workspace.swift`, `FilePane.swift`, `ProfileEditor.swift`, `RemoteEdit.swift`: SwiftUI-Ansichten und Verbindungszustand.
+## Architecture and technical decisions
 
-**SSH-Backend:** Statt eine zusätzliche SSH-Bibliothek zu bündeln, verwendet die App das von Apple ausgelieferte, gepflegte OpenSSH. Das erfüllt den Zweck einer etablierten SSH-Implementierung ohne externe Abhängigkeit und erhält die Kompatibilität mit Agent, `Include`, `Match`, IdentityFile und ProxyJump. Die App implementiert nur SFTP-v3-Dateibefehle, nicht die Transportverschlüsselung. Das ebenfalls geprüfte [libssh2](https://github.com/libssh2/libssh2) wäre eine zusätzliche C-Build-/Distributionsabhängigkeit. [SwiftNIO SSH](https://github.com/apple/swift-nio-ssh) beschreibt sich als SSH-Baustein statt fertigem Client und nennt in seinem dokumentierten asymmetrischen Algorithmensatz Ed25519/ECDSA; für die geforderte Kombination mit RSA und bestehender OpenSSH-Konfiguration fiel die Entscheidung auf den Systemclient.
+- `Models.swift`: profiles, file metadata, navigation, and conflict strategies.
+- `SFTP.swift`: binary SFTP v3 framing and file commands over stdin/stdout of `/usr/bin/ssh -s … sftp`. No shell command chains, `ls` parsing, or custom SSH cryptography.
+- `FileSystem.swift`: local file access and asynchronous panel view models with protection against stale navigation results.
+- `Transfers.swift`: bounded parallel queue, recursive transfers, conflicts, progress, average speed, and estimated remaining time.
+- `Security.swift`: macOS Keychain and secret-free JSON profiles in `~/Library/Application Support/BasedFTP/profiles.json`.
+- `FileOutlineView.swift`: native AppKit tree with selection, drag sources, row-specific drop targets, column sorting, and context menus.
+- `RemoteEdit.swift`: monitored editing sessions, stable SHA256 snapshots, serialized automatic uploads, and status display.
+- `EditorApplications.swift`: native application selection and BasedFTP-specific per-extension associations.
+- `Workspace.swift`, `FilePane.swift`, `ProfileEditor.swift`: SwiftUI views and connection state.
 
-Jede Navigation, Dateioperation bzw. jeder Transferjob verwendet einen eigenen SSH-Subsystemprozess. Dadurch beeinträchtigt der Abbruch eines Jobs andere Verbindungen nicht. Es gibt derzeit keinen dauerhaft von der App verwalteten Verbindungspool und keine automatische Wiederholung schreibender Operationen. „Erneut versuchen“ verbindet neu. Benutzerseitig konfigurierte OpenSSH-Multiplexing-Einstellungen können weiterhin wirken.
+**SSH backend:** Instead of bundling an additional SSH library, the app uses Apple's maintained system OpenSSH. This provides an established SSH implementation without an external dependency and preserves compatibility with agents, `Include`, `Match`, IdentityFile, and ProxyJump. The app implements only SFTP v3 file commands, not transport encryption. [libssh2](https://github.com/libssh2/libssh2), also evaluated, would add a C build/distribution dependency. [SwiftNIO SSH](https://github.com/apple/swift-nio-ssh) describes itself as an SSH building block rather than a complete client and lists Ed25519/ECDSA in its documented asymmetric algorithm set. The requirement for RSA and existing OpenSSH configurations led to choosing the system client.
 
-Die Protokoll-I/O läuft außerhalb des Main Actors. Die Oberfläche erhält gedrosselte Fortschrittsupdates. Transfers verwenden 64-KiB-Blöcke mit bis zu acht gleichzeitig ausstehenden Anfragen. Antwort-IDs werden geprüft, anders geordnete Antworten gepuffert und kurze Server-Leseantworten vervollständigt. Ein verbindungsübergreifender Bandbreitenregler und adaptive Fenstergrößen fehlen derzeit.
+Each navigation request, file operation, or transfer job uses its own SSH subsystem process. Canceling one job therefore does not affect other connections. There is currently no persistent, app-managed connection pool or automatic retry of write operations. Retry reconnects. User-configured OpenSSH multiplexing settings may still apply.
 
-Referenzen, geprüft bei der Implementierung:
+Protocol I/O runs outside the Main Actor. The interface receives throttled progress updates. Transfers use 64 KiB blocks with up to eight outstanding requests. Response IDs are checked, out-of-order responses buffered, and short server reads completed. Cross-connection bandwidth limiting and adaptive window sizes are not currently implemented.
 
-- [OpenSSH SFTP-Client und Fähigkeiten](https://man.openbsd.org/sftp)
-- [OpenSSH-Konfiguration und Prioritäten](https://man.openbsd.org/ssh_config)
-- [SFTP-v3-Protokoll](https://www.ietf.org/archive/id/draft-ietf-secsh-filexfer-02.txt)
-- [OpenSSH-SFTP-Erweiterungen](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL)
+References consulted during implementation:
 
-## Sicherheit und Grenzen
+- [OpenSSH SFTP client and capabilities](https://man.openbsd.org/sftp)
+- [OpenSSH configuration and precedence](https://man.openbsd.org/ssh_config)
+- [SFTP v3 protocol](https://www.ietf.org/archive/id/draft-ietf-secsh-filexfer-02.txt)
+- [OpenSSH SFTP extensions](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL)
 
-- `StrictHostKeyChecking=yes`, keine Agent-Weiterleitung, keine LocalCommand-Ausführung, keine Weiterleitungen. Die App erzwingt `~/.ssh/known_hosts` und `/etc/ssh/ssh_known_hosts`; alternative KnownHosts-Pfade aus der SSH-Konfiguration werden absichtlich nicht übernommen. DNS-basierte automatische Host-Key-Annahme und automatische Schlüsselupdates sind deaktiviert.
-- Passwörter und Passphrasen befinden sich nur im macOS-Schlüsselbund. Der eigene kurzlebige ASKPASS-Unterprozess liefert sie über eine Pipe an OpenSSH. Es gibt keine Geheimnisse in Prozessargumenten, Umgebungsvariablen, Profil-JSON oder Logs. Private Schlüssel bleiben an ihrem bestehenden Ort.
-- Profil- und Dateinamen werden nicht als Shellcode ausgeführt. Hostnamen und Ports werden validiert, Protokollpakete haben Größenlimits. UTF-8-Dateinamen einschließlich Leerzeichen, Anführungszeichen, Unicode und Zeilenumbrüchen sind unterstützt. Nicht-UTF-8-Dateinamen werden ausdrücklich abgelehnt.
-- Neue Transfers schreiben zunächst eine eindeutig benannte `.partial`-Datei im Zielordner. Erst nach erfolgreichem Abschluss wird sie übernommen. OpenSSH-Server verwenden dafür `posix-rename@openssh.com`; bei Servern ohne diese Erweiterung ist Überschreiben nach abgeschlossenem Upload nicht atomar. Nach Fehlern können solche versteckten Arbeitsdateien zur manuellen Bereinigung zurückbleiben.
-- **Fortsetzen** schreibt direkt in die bestehende Zieldatei. Nur bei identischem Präfix verwenden: SFTP-v3 garantiert keinen Inhaltsvergleich vorhandener Teilstücke. Bei größerer Zieldatei wird abgebrochen. „Erneut“ übernimmt die ursprüngliche Strategie. Der Button „Fortsetzen“ am abgebrochenen Job verwendet dessen gespeicherte Arbeitsdateipfade; nach einem App-Neustart müssen zurückgebliebene Arbeitsdateien manuell zugeordnet/umbenannt werden. Vorher sicherstellen, dass die Quelle unverändert ist.
-- Symlinks und Spezialdateien werden bei Transfers ausdrücklich abgelehnt, damit rekursive Übertragungen keine Links verfolgen. Navigation zu einem bekannten Zielpfad bleibt möglich. Es gibt keine vollständige Absicherung gegen gleichzeitige böswillige Änderungen des Dateisystems.
-- Remote-Bearbeiten verwendet derzeit keinen atomaren Versionsvergleich und lädt direkt über die bestehende Datei. Gleichzeitige Änderungen mit identischer Größe/sekundengenauem Zeitstempel können unerkannt bleiben. Arbeitskopien bleiben in einem privaten temporären Unterordner und werden nicht automatisch gelöscht.
-- Queue und offene Tabs überleben einen App-Neustart noch nicht. Es gibt keine Verzeichnissynchronisierung, keinen Verzeichnisvergleich und keine Bandbreitenbegrenzung. Ein eigener Editor-Picker und automatisch überwachte Editor-Uploads fehlen. Diese Funktionen werden nicht als fertig dargestellt.
-- Die App ist für lokalen Build und direkte Nutzung gedacht, derzeit ohne App-Sandbox, Distribution-Signatur und Notarisierung. Keine App-Store-Freigabe. Zugriff auf macOS-geschützte Ordner unterliegt den normalen Systemrechten.
+## Security and limitations
 
-## Verifikation dieses Stands
+- `StrictHostKeyChecking=yes`, no agent forwarding, LocalCommand execution, or port forwarding. The app enforces `~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`; alternative KnownHosts paths from SSH configuration are deliberately ignored. Automatic DNS-based host-key acceptance and automatic key updates are disabled.
+- Passwords and passphrases are stored only in macOS Keychain. A dedicated, short-lived ASKPASS subprocess supplies them to OpenSSH through a pipe. Secrets are absent from process arguments, environment variables, profile JSON, and logs. Private keys remain at their existing locations.
+- Profile names and filenames are never executed as shell code. Hosts and ports are validated, and protocol packets have size limits. UTF-8 filenames, including spaces, quotes, Unicode, and newlines, are supported. Non-UTF-8 filenames are explicitly rejected.
+- New transfers first write a uniquely named `.partial` file in the destination folder. It is committed only after successful completion. OpenSSH servers use `posix-rename@openssh.com`; overwriting after a completed upload is not atomic on servers without this extension. Hidden staging files may remain after failures and require manual cleanup.
+- **Resume** writes directly into the existing destination file. Use it only with an identical prefix: SFTP v3 cannot guarantee a content comparison of existing partial data. A larger destination file causes failure. Retry retains the original strategy. Resume on a canceled job uses its saved staging paths; after restarting the app, leftover staging files must be identified/renamed manually. First ensure the source is unchanged.
+- Symlinks and special files are individually skipped during uploads/downloads, allowing recursive transfers to continue without following links. The queue shows their count and full paths under **items skipped – Details**; successful jobs with skipped entries display **Completed with Warnings**. Navigation to a known destination path remains possible. There is no complete protection against concurrent malicious filesystem changes.
+- **Automatic remote editing only replaces files atomically:** the new version is uploaded completely into an exclusively created staging file in the same server directory, then committed using `posix-rename@openssh.com`. If the server lacks this extension or the target is not a regular file, the operation fails with an explanatory error. Remote editing has no delete-and-rename fallback. If the connection drops after renaming, acknowledgment may be lost; the server then contains either the old or the complete new file. There is no version comparison or backup history: intervening changes are deliberately overwritten.
+- Editing sessions check local metadata approximately every 700 ms. On changes, two stable content observations are compared using SHA256; snapshots protect active uploads from subsequent local modifications. Atomic editor saves are detected too. Large unchanged files are not continuously rehashed.
+- Working copies are retained in private directories under `~/Library/Application Support/BasedFTP/Edits/<session-ID>/`. Failed server staging files may require manual cleanup. Monitoring ends when the window/app closes and is not yet restored automatically after restart. Closing a connection tab keeps its still-visible editing session active. Unix rwx permissions are preserved; ownership, ACLs, and other metadata are not yet fully preserved.
+- The queue and open tabs do not survive app restarts. Directory synchronization, directory comparison, bandwidth limiting, and Quick Look are not implemented.
+- The app is intended for local builds and direct use, currently without App Sandbox, a distribution signature, or notarization. It has no App Store approval. Access to macOS-protected folders follows normal system permissions.
 
-Details und tatsächlich ausgeführte Prüfungen stehen in `VALIDATION.md`. Passwortanmeldung und die Keychain-ASKPASS-Kette benötigen zusätzlich einen interaktiven Test mit einem entsprechenden Testkonto; sie sind implementiert, aber nicht als vollständig end-to-end getestet ausgewiesen. Große produktive Verzeichnisse, stundenlange Transfers, unterschiedliche Drittanbieter-Server und ältere macOS-Versionen benötigen weitere Praxistests, bevor man diesen Stand als professionell gehärtete 1.0 einstuft.
+## Validation of this version
+
+See [VALIDATION.md](VALIDATION.md) for details and checks actually performed. Password authentication and the Keychain/ASKPASS chain additionally require an interactive test with a suitable test account; they are implemented but not claimed as fully tested end to end. Large production directories, hours-long transfers, different third-party servers, and older macOS versions need further practical testing before this version can be considered a professionally hardened 1.0.

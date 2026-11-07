@@ -1,7 +1,103 @@
 import XCTest
+import Darwin
 @testable import BasedFTP
 
 final class CoreTests: XCTestCase {
+    func testPipelinedRecursiveDeletionReportsProgressWithoutFollowingLinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BasedFTP-delete-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("remove")
+        try FileManager.default.createDirectory(at: target.appendingPathComponent("a/b"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("keep"), withIntermediateDirectories: true)
+        let keep = root.appendingPathComponent("keep/precious")
+        try Data("keep me".utf8).write(to: keep)
+        for index in 0..<64 { try Data("file".utf8).write(to: target.appendingPathComponent("file-\(index)")) }
+        for path in ["a/file", "a/b/file", "empty-file"] { try Data().write(to: target.appendingPathComponent(path)) }
+        try FileManager.default.createSymbolicLink(atPath: target.appendingPathComponent("outside-link").path, withDestinationPath: "../keep")
+        try FileManager.default.createSymbolicLink(atPath: target.appendingPathComponent("loop").path, withDestinationPath: ".")
+        XCTAssertEqual(mkfifo(target.appendingPathComponent("pipe").path, 0o600), 0)
+        let client = try SFTPClient(profile: nil, localServer: "/usr/libexec/sftp-server"); defer { client.close() }
+        var updates: [DeletionProgress] = []
+        try client.delete([client.stat(target.path)]) { updates.append($0) }
+        XCTAssertFalse(try client.exists(target.path))
+        XCTAssertEqual(try String(contentsOf: keep, encoding: .utf8), "keep me")
+        XCTAssertEqual(updates.last?.removed, 73) // Files, directories, two links, FIFO and root.
+        XCTAssertTrue(updates.contains { $0.listing })
+        XCTAssertTrue(updates.contains { $0.removed > 0 && $0.removed < 73 })
+        XCTAssertGreaterThanOrEqual(client.maximumOutstandingRequests, 16)
+        XCTAssertLessThanOrEqual(client.maximumOutstandingRequests, 32)
+        XCTAssertThrowsError(try client.delete([FileEntry(name: "/", path: "/", permissions: 0o040755)]))
+    }
+    func testDeletionCancellationStopsBeforeRemainingFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BasedFTP-delete-cancel-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<64 { try Data().write(to: root.appendingPathComponent("file-\(index)")) }
+        let control = OperationControl()
+        let client = try SFTPClient(profile: nil, control: control, localServer: "/usr/libexec/sftp-server"); defer { client.close() }
+        var removed = 0
+        XCTAssertThrowsError(try client.delete([LocalFiles.entry(root)]) { progress in
+            removed = progress.removed
+            if removed >= 16 { control.cancel() }
+        })
+        XCTAssertEqual(removed, 16)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path).count, 48)
+    }
+    func testDeletionPermissionFailureKeepsParentAndReportsPath() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BasedFTP-delete-denied-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path); try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("protected")
+        try Data("preserve".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+        let client = try SFTPClient(profile: nil, localServer: "/usr/libexec/sftp-server"); defer { client.close() }
+        var removed = -1
+        XCTAssertThrowsError(try client.delete([client.stat(root.path)]) { removed = $0.removed }) { error in
+            XCTAssertTrue(error.localizedDescription.contains("protected"), error.localizedDescription)
+        }
+        XCTAssertEqual(removed, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
+    func testReadableTransferDuration() {
+        let cases: [(TimeInterval, String)] = [
+            (0, "0 seconds"), (1, "1 second"), (59, "59 seconds"),
+            (60, "1 minute"), (61, "1 minute and 1 second"),
+            (600, "10 minutes"), (605, "10 minutes and 5 seconds"),
+            (3600, "1 hour"), (3665, "1 hour, 1 minute and 5 seconds"),
+            (86400, "1 day"), (90061, "1 day, 1 hour, 1 minute and 1 second"),
+            (172800, "2 days"), (0.2, "1 second")
+        ]
+        for (seconds, expected) in cases { XCTAssertEqual(TransferDuration.formatted(seconds), expected) }
+        for invalid in [Double.nan, .infinity, -.infinity, -1, .greatestFiniteMagnitude] { XCTAssertEqual(TransferDuration.formatted(invalid), "—") }
+        XCTAssertEqual(TransferDuration.formatted(nil), "—")
+    }
+    func testFileCountsIncludeEmptyFilesAndDistinguishSkippedFilesOnResume() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BasedFTP-count-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        try FileManager.default.createDirectory(at: source.appendingPathComponent("nested/empty-directory"), withIntermediateDirectories: true)
+        try Data("content".utf8).write(to: source.appendingPathComponent("nested/file"))
+        try Data().write(to: source.appendingPathComponent("empty-file"))
+        let client = try SFTPClient(profile: nil, localServer: "/usr/libexec/sftp-server"); defer { client.close() }
+        let destination = root.appendingPathComponent("destination").path
+        let checkpoint = TransferCheckpoint()
+        let upload = TransferEngine(client: client, upload: true, policy: .rename)
+        var updates: [TransferFileProgress] = []
+        try upload.run(source: LocalFiles.entry(source), destination: destination, files: { updates.append($0) }) { _, _ in }
+        XCTAssertEqual(updates.first, TransferFileProgress(transferred: 0, total: 2, skipped: 0))
+        XCTAssertTrue(updates.contains { $0.transferred == 1 && $0.remaining == 1 })
+        XCTAssertEqual(upload.fileProgress, TransferFileProgress(transferred: 2, total: 2, skipped: 0))
+        let download = TransferEngine(client: client, upload: false, policy: .rename)
+        try download.run(source: client.stat(destination), destination: root.appendingPathComponent("downloaded").path) { _, _ in }
+        XCTAssertEqual(download.fileProgress.transferred, 2)
+        let skip = TransferEngine(client: client, upload: true, policy: .skip, checkpoint: checkpoint)
+        try skip.run(source: LocalFiles.entry(source), destination: destination) { _, _ in }
+        XCTAssertEqual(skip.fileProgress, TransferFileProgress(transferred: 0, total: 2, skipped: 2))
+        XCTAssertEqual(skip.fileProgress.remaining, 0)
+        let resume = TransferEngine(client: client, upload: true, policy: .resume, checkpoint: checkpoint, resumeCheckpoint: true, retryPolicy: .skip)
+        try resume.run(source: LocalFiles.entry(source), destination: destination) { _, _ in }
+        XCTAssertEqual(resume.fileProgress, skip.fileProgress)
+    }
     func testPacketRoundTripAndTruncation() throws {
         var packet = Packet(); packet.byte(42); packet.uint(0xfedcba98); packet.long(0xfedcba9876543210); packet.string("Grüße\n日本語")
         XCTAssertEqual(try packet.readByte(), 42)
@@ -97,7 +193,48 @@ final class CoreTests: XCTestCase {
         try TransferEngine(client: client, upload: true, policy: .overwrite).run(source: entry, destination: remote) { _, _ in }
         XCTAssertEqual(try client.stat(remote + "/nested/file").size, 7)
         try FileManager.default.createSymbolicLink(atPath: source.appendingPathComponent("link").path, withDestinationPath: "/")
-        XCTAssertThrowsError(try TransferEngine(client: client, upload: true, policy: .overwrite).run(source: LocalFiles.entry(source), destination: remote) { _, _ in })
+        let engine = TransferEngine(client: client, upload: true, policy: .overwrite)
+        try engine.run(source: LocalFiles.entry(source), destination: remote) { _, _ in }
+        XCTAssertEqual(engine.warnings.map(\.path), [FileEntry.join(try LocalFiles.canonicalPath(source.path), "link")])
+        XCTAssertEqual(try client.stat(remote + "/nested/file").size, 7)
+        XCTAssertFalse(try client.exists(remote + "/link"))
+    }
+    func testUnsupportedEntriesWarnAndDoNotStopUploadsOrDownloads() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BasedFTP-skip-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        try FileManager.default.createDirectory(at: source.appendingPathComponent("nested"), withIntermediateDirectories: true)
+        try Data("root content".utf8).write(to: source.appendingPathComponent("regular.txt"))
+        try Data("nested content".utf8).write(to: source.appendingPathComponent("nested/regular.txt"))
+        try FileManager.default.createSymbolicLink(atPath: source.appendingPathComponent("broken-link").path, withDestinationPath: "missing")
+        try FileManager.default.createSymbolicLink(atPath: source.appendingPathComponent("nested/loop").path, withDestinationPath: "..")
+        XCTAssertEqual(mkfifo(source.appendingPathComponent("pipe").path, 0o600), 0)
+        let client = try SFTPClient(profile: nil, localServer: "/usr/libexec/sftp-server"); defer { client.close() }
+        let sourcePath = try LocalFiles.canonicalPath(source.path)
+        let expectedWarnings: Set<String> = ["broken-link", "nested/loop", "pipe"]
+        for upload in [true, false] {
+            let destination = root.appendingPathComponent(upload ? "uploaded" : "downloaded")
+            let engine = TransferEngine(client: client, upload: upload, policy: .rename)
+            var emitted: [TransferWarning] = []
+            var finalBytes: UInt64 = 0, finalTotal: UInt64 = 0
+            let entry = upload ? try LocalFiles.entry(URL(fileURLWithPath: sourcePath)) : try client.stat(sourcePath)
+            try engine.run(source: entry, destination: destination.path, warning: { emitted.append($0) }) { done, total in finalBytes = done; finalTotal = total }
+            XCTAssertEqual(Set(engine.warnings.map { String($0.path.dropFirst(sourcePath.count + 1)) }), expectedWarnings)
+            XCTAssertEqual(emitted.count, 3) // Measurement and transfer must not duplicate warnings.
+            XCTAssertEqual(engine.warnings.filter { $0.reason == .symlink }.count, 2)
+            XCTAssertEqual(engine.warnings.filter { $0.reason == .specialFile }.count, 1)
+            XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("regular.txt"), encoding: .utf8), "root content")
+            XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("nested/regular.txt"), encoding: .utf8), "nested content")
+            XCTAssertEqual(finalBytes, UInt64(Data("root contentnested content".utf8).count))
+            XCTAssertEqual(finalTotal, finalBytes)
+            XCTAssertEqual(engine.fileProgress, TransferFileProgress(transferred: 2, total: 2, skipped: 0))
+            for path in expectedWarnings { XCTAssertFalse(try client.exists(destination.appendingPathComponent(path).path)) }
+            let linkJob = TransferEngine(client: client, upload: upload, policy: .rename)
+            let link = source.appendingPathComponent("broken-link")
+            try linkJob.run(source: upload ? LocalFiles.entry(link) : client.stat(link.path), destination: root.appendingPathComponent("must-not-exist").path) { _, _ in }
+            XCTAssertEqual(linkJob.warnings.count, 1)
+            XCTAssertFalse(try client.exists(root.appendingPathComponent("must-not-exist").path))
+        }
     }
     func testInterruptedStagedUploadCanResumeWithoutDamagingOriginal() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("BasedFTP-resume-" + UUID().uuidString)

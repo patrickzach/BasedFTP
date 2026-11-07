@@ -7,6 +7,7 @@ struct FileOutlineView: NSViewRepresentable {
     let workspace: Workspace
     let tabID: UUID
     let open: (FileEntry) -> Void
+    let openWith: (FileEntry, URL?) -> Void
     let action: (FilePane.FileAction) -> Void
     let delete: () -> Void
 
@@ -20,7 +21,7 @@ struct FileOutlineView: NSViewRepresentable {
         outline.intercellSpacing = NSSize(width: 4, height: 0)
         outline.indentationPerLevel = 16
         outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        for (key, title, width) in [("name", "Name", 200.0), ("size", "Größe", 72.0), ("kind", "Typ", 56.0), ("modified", "Geändert", 140.0), ("mode", "Rechte", 54.0)] {
+        for (key, title, width) in [("name", "Name", 200.0), ("size", "Size", 72.0), ("kind", "Kind", 56.0), ("modified", "Modified", 140.0), ("mode", "Mode", 54.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(key))
             column.title = title; column.width = width
             column.minWidth = key == "name" ? 120 : 44
@@ -197,17 +198,22 @@ struct FileOutlineView: NSViewRepresentable {
                 item.target = handler; item.representedObject = handler; item.isEnabled = enabled; menu.addItem(item)
             }
             menu.autoenablesItems = false
-            add(parent.pane.remote ? "Herunterladen" : "Hochladen", enabled: !entries.isEmpty) { self.parent.workspace.transfer(from: self.parent.pane) }
+            add(parent.pane.remote ? "Download" : "Upload", enabled: !entries.isEmpty) { self.parent.workspace.transfer(from: self.parent.pane) }
             if entries.count == 1, let entry = entries.first {
-                add(entry.isDirectory ? "Öffnen" : self.parent.pane.remote ? "Remote bearbeiten…" : "Öffnen") { self.parent.open(entry) }
-                add("Umbenennen…") { self.parent.action(.rename) }
+                add(entry.isDirectory ? "Open" : self.parent.pane.remote ? "Edit Remote File" : "Open") { self.parent.open(entry) }
+                if entry.isRegular {
+                    let item = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+                    item.submenu = EditorApplications.menu(for: entry) { app in self.parent.openWith(entry, app) }
+                    menu.addItem(item)
+                }
+                add("Rename…") { self.parent.action(.rename) }
             }
-            add("Verschieben nach…", enabled: !entries.isEmpty) { self.parent.action(.move) }
-            add("Berechtigungen…", enabled: !entries.isEmpty) { self.parent.action(.chmod) }
+            add("Move To…", enabled: !entries.isEmpty) { self.parent.action(.move) }
+            add("Permissions…", enabled: !entries.isEmpty) { self.parent.action(.chmod) }
             menu.addItem(.separator())
-            add("Neuer Ordner…") { self.parent.action(.folder) }; add("Neue Datei…") { self.parent.action(.file) }
+            add("New Folder…") { self.parent.action(.folder) }; add("New File…") { self.parent.action(.file) }
             menu.addItem(.separator())
-            add(parent.pane.remote ? "Endgültig löschen…" : "In den Papierkorb…", enabled: !entries.isEmpty) { self.parent.delete() }
+            add(parent.pane.remote ? "Delete Permanently…" : "Move to Trash…", enabled: !entries.isEmpty) { self.parent.delete() }
             return menu
         }
     }

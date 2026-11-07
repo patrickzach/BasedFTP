@@ -38,9 +38,14 @@ struct BookmarkActivationGate {
     @Published var activeRemote = false
     @Published var showTransfers = true
     let queue = TransferQueue()
+    let edits = RemoteEditManager()
     var tab: ConnectionTab? { tabs.first { $0.id == selected } }
     var activePane: PaneModel? { activeRemote ? tab?.remote : tab?.local }
     init() {
+        edits.onUploaded = { [weak self] profile, _ in
+            guard let self else { return }
+            for tab in self.tabs where tab.profile.id == profile.id && !tab.remote.busy { tab.remote.refresh() }
+        }
         queue.onComplete = { [weak self] in
             guard let self else { return }
             for tab in self.tabs { if !tab.local.busy { tab.local.refresh() }; if !tab.remote.busy { tab.remote.refresh() } }
@@ -97,13 +102,13 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             List {
-                Section("Zuletzt verwendet") {
+                Section("Recent Connections") {
                     ForEach(profiles.profiles.filter { $0.lastUsed != nil }.sorted { $0.lastUsed! > $1.lastUsed! }.prefix(4)) { profile in
                         Button { connectBookmark(profile) } label: { Label(profile.title, systemImage: "clock").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain)
                             .simultaneousGesture(TapGesture(count: 2).onEnded { connectBookmark(profile) })
                     }
                 }
-                Section("Server") {
+                Section("Servers") {
                     ForEach(profiles.profiles.sorted { ($0.favorite ? 0 : 1, $0.title) < ($1.favorite ? 0 : 1, $1.title) }) { profile in
                         Button { connectBookmark(profile) } label: {
                             HStack { Image(systemName: profile.favorite ? "star.fill" : "server.rack").foregroundStyle(profile.favorite ? .yellow : .secondary); VStack(alignment: .leading) { Text(profile.title); Text(profile.host).font(.caption).foregroundStyle(.secondary) } }
@@ -111,16 +116,15 @@ struct RootView: View {
                         }.buttonStyle(.plain)
                         .simultaneousGesture(TapGesture(count: 2).onEnded { connectBookmark(profile) })
                         .contextMenu {
-                            Button("Verbinden") { connect(profile) }
-                            Button("Bearbeiten…") { editing = profile }
-                            Button(profile.favorite ? "Favorit entfernen" : "Als Favorit markieren") { var p = profile; p.favorite.toggle(); profiles.save(p) }
-                            Button("Profil löschen", role: .destructive) { profiles.remove(profile) }
+                            Button("Connect") { connect(profile) }
+                            Button("Edit…") { editing = profile }
+                            Button(profile.favorite ? "Remove Favorite" : "Add to Favorites") { var p = profile; p.favorite.toggle(); profiles.save(p) }
+                            Button("Delete Profile", role: .destructive) { profiles.remove(profile) }
                         }
                     }
                 }
                 Section {
-                    Button("Server hinzufügen", systemImage: "plus") { editing = ServerProfile() }
-                    Button("SSH-Hosts importieren", systemImage: "square.and.arrow.down") { profiles.importSSHHosts() }
+                    Button("Add Server", systemImage: "plus") { editing = ServerProfile() }
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 300)
@@ -145,29 +149,33 @@ struct RootView: View {
                         FilePane(pane: tab.local, workspace: workspace, tabID: tab.id).frame(minWidth: 310)
                         FilePane(pane: tab.remote, workspace: workspace, tabID: tab.id).frame(minWidth: 310)
                     }.id(tab.id)
+                    RemoteEditsView(manager: workspace.edits)
                     if workspace.showTransfers { Divider(); QueueView(queue: workspace.queue).frame(minHeight: 130, idealHeight: 180, maxHeight: 220) }
                     StatusBar(tab: tab, queue: workspace.queue)
                 } else {
                     ContentUnavailableView {
-                        Label("Deine Dateien. Überall.", systemImage: "externaldrive.connected.to.line.below")
-                    } description: { Text("Wähle einen Server oder füge eine SSH-Verbindung hinzu.") } actions: {
-                        Button("Server hinzufügen…") { editing = ServerProfile() }.buttonStyle(.borderedProminent)
+                        Label("Your files. Everywhere.", systemImage: "externaldrive.connected.to.line.below")
+                    } description: { Text("Choose a server or add an SSH connection.") } actions: {
+                        Button("Add Server…") { editing = ServerProfile() }.buttonStyle(.borderedProminent)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    RemoteEditsView(manager: workspace.edits)
                 }
             }
         }
+        .onDisappear { workspace.edits.stopAll() }
         .frame(minWidth: 1000, minHeight: 650)
         .toolbar {
             ToolbarItemGroup {
-                Button { editing = ServerProfile() } label: { Label("Neue Verbindung", systemImage: "plus") }.keyboardShortcut("n")
-                Button { workspace.activePane?.refresh() } label: { Label("Aktualisieren", systemImage: "arrow.clockwise") }.keyboardShortcut("r").disabled(workspace.tab == nil)
-                Button { if let pane = workspace.activePane { workspace.transfer(from: pane) } } label: { Label("Übertragen", systemImage: "arrow.left.arrow.right") }.keyboardShortcut("t").disabled(workspace.activePane?.selected.isEmpty ?? true)
+                Button { editing = ServerProfile() } label: { Label("New Connection", systemImage: "plus") }.keyboardShortcut("n")
+                Button { workspace.activePane?.refresh() } label: { Label("Refresh", systemImage: "arrow.clockwise") }.keyboardShortcut("r").disabled(workspace.tab == nil)
+                Button { if let pane = workspace.activePane { workspace.transfer(from: pane) } } label: { Label("Transfer", systemImage: "arrow.left.arrow.right") }.keyboardShortcut("t").disabled(workspace.activePane?.selected.isEmpty ?? true)
                 Button { workspace.showTransfers.toggle() } label: { Label("Transfers", systemImage: "list.bullet.rectangle") }
             }
         }
         .sheet(item: $editing) { profile in ProfileEditor(profile: profile, store: profiles) { profile, remember in if remember { connect(profile) } else { workspace.connect(profile) } } }
-        .alert("Profile konnten nicht gespeichert werden", isPresented: Binding(get: { profiles.persistenceError != nil }, set: { if !$0 { profiles.persistenceError = nil } })) { Button("OK") { profiles.persistenceError = nil } } message: { Text(profiles.persistenceError ?? "") }
+        .alert("Could not save profiles", isPresented: Binding(get: { profiles.persistenceError != nil }, set: { if !$0 { profiles.persistenceError = nil } })) { Button("OK") { profiles.persistenceError = nil } } message: { Text(profiles.persistenceError ?? "") }
         .focusedSceneValue(\.workspace, workspace)
+        .focusedSceneValue(\.profiles, profiles)
     }
     private func connectBookmark(_ profile: ServerProfile) {
         guard bookmarkGate.shouldOpen(profile.id, at: ProcessInfo.processInfo.systemUptime, doubleClickInterval: NSEvent.doubleClickInterval) else { return }
@@ -176,28 +184,36 @@ struct RootView: View {
     private func connect(_ profile: ServerProfile) { var p = profile; p.lastUsed = Date(); profiles.save(p); workspace.connect(p) }
 }
 
+private struct ProfileStoreKey: FocusedValueKey { typealias Value = ProfileStore }
+extension FocusedValues { var profiles: ProfileStore? { get { self[ProfileStoreKey.self] } set { self[ProfileStoreKey.self] = newValue } } }
+
 private struct WorkspaceKey: FocusedValueKey { typealias Value = Workspace }
 extension FocusedValues { var workspace: Workspace? { get { self[WorkspaceKey.self] } set { self[WorkspaceKey.self] = newValue } } }
 
 struct AppCommands: Commands {
     @FocusedValue(\.workspace) var workspace
+    @FocusedValue(\.profiles) var profiles
     var body: some Commands {
         CommandGroup(replacing: .saveItem) {
-            Button("Tab schließen") { workspace?.closeSelectedTab() }
+            Button("Close Tab") { workspace?.closeSelectedTab() }
                 .keyboardShortcut("w", modifiers: .command)
                 .disabled(workspace?.tab == nil)
-            Button("Fenster schließen") { NSApp.keyWindow?.performClose(nil) }
+            Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
         }
-        CommandMenu("Dateien") {
-            Button("Übertragen") { if let w = workspace, let p = w.activePane { w.transfer(from: p) } }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: [])
-            Button("Neuer Ordner…") { NotificationCenter.default.post(name: .paneCommand, object: "folder") }.keyboardShortcut("n", modifiers: [.command, .shift])
-            Button("Umbenennen…") { NotificationCenter.default.post(name: .paneCommand, object: "rename") }.keyboardShortcut("\r", modifiers: .command)
-            Button("Löschen…") { NotificationCenter.default.post(name: .paneCommand, object: "delete") }.keyboardShortcut(.delete, modifiers: .command)
-            Button("Übergeordnetes Verzeichnis") { workspace?.activePane?.up() }.keyboardShortcut(.upArrow, modifiers: .command)
-            Button("Zurück") { workspace?.activePane?.back() }.keyboardShortcut("[", modifiers: .command)
-            Button("Vorwärts") { workspace?.activePane?.forward() }.keyboardShortcut("]", modifiers: .command)
-            Button("Versteckte Dateien") { workspace?.activePane?.showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
+        CommandMenu("Connections") {
+            Button("Import from SSH Configuration") { profiles?.importSSHHosts() }
+                .disabled(profiles == nil)
+        }
+        CommandMenu("Files") {
+            Button("Transfer") { if let w = workspace, let p = w.activePane { w.transfer(from: p) } }.keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: [])
+            Button("New Folder…") { NotificationCenter.default.post(name: .paneCommand, object: "folder") }.keyboardShortcut("n", modifiers: [.command, .shift])
+            Button("Rename…") { NotificationCenter.default.post(name: .paneCommand, object: "rename") }.keyboardShortcut("\r", modifiers: .command)
+            Button("Delete…") { NotificationCenter.default.post(name: .paneCommand, object: "delete") }.keyboardShortcut(.delete, modifiers: .command)
+            Button("Enclosing Folder") { workspace?.activePane?.up() }.keyboardShortcut(.upArrow, modifiers: .command)
+            Button("Back") { workspace?.activePane?.back() }.keyboardShortcut("[", modifiers: .command)
+            Button("Forward") { workspace?.activePane?.forward() }.keyboardShortcut("]", modifiers: .command)
+            Button("Show Hidden Files") { workspace?.activePane?.showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
         }
     }
 }

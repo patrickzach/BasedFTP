@@ -2,7 +2,7 @@ import Foundation
 
 struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
     var id = UUID()
-    var name = "Neuer Server"
+    var name = "New Server"
     var host = ""
     var user = ""
     var port = ""
@@ -15,7 +15,7 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
         guard !host.isEmpty, !host.hasPrefix("-"), !host.contains(where: { $0.isWhitespace || $0 == "@" || $0 == "/" || $0 == ":" }),
               !user.contains(where: { $0.isWhitespace || $0 == "@" }),
               port.isEmpty || (Int(port).map { (1...65535).contains($0) } ?? false) else {
-            throw FTPError.message("Bitte gültigen Host (oder SSH-Alias), Benutzer und Port eingeben. IPv6 über einen SSH-Alias konfigurieren.")
+            throw FTPError.message("Enter a valid host (or SSH alias), username and port. Configure IPv6 using an SSH alias.")
         }
     }
     var sshArguments: [String] {
@@ -38,7 +38,7 @@ struct FileEntry: Identifiable, Hashable, Sendable {
     var isDirectory: Bool { permissions & 0o170000 == 0o040000 }
     var isRegular: Bool { permissions & 0o170000 == 0o100000 }
     var isSymlink: Bool { permissions & 0o170000 == 0o120000 }
-    var kind: String { isDirectory ? "Ordner" : isSymlink ? "Link" : (name as NSString).pathExtension.uppercased() }
+    var kind: String { isDirectory ? "Folder" : isSymlink ? "Link" : (name as NSString).pathExtension.uppercased() }
     var sizeText: String { isDirectory ? "—" : ByteCountFormatter.string(fromByteCount: Int64(clamping: size), countStyle: .file) }
     var modeText: String { String(format: "%04o", permissions & 0o7777) }
     static func join(_ directory: String, _ name: String) -> String { directory == "/" ? "/" + name : directory + "/" + name }
@@ -64,6 +64,6 @@ struct NavigationHistory {
 }
 
 enum ConflictPolicy: String, CaseIterable, Identifiable {
-    case skip = "Überspringen", rename = "Umbenennen", overwrite = "Überschreiben", resume = "Fortsetzen"
+    case skip = "Skip", rename = "Rename", overwrite = "Overwrite", resume = "Resume"
     var id: String { rawValue }
 }

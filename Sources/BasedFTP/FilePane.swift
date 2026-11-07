@@ -8,21 +8,20 @@ struct FilePane: View {
     let tabID: UUID
     @State private var action: FileAction?
     @State private var deleteAlert = false
-    @State private var edit: RemoteEdit?
-        enum FileAction: String, Identifiable { case folder = "Neuer Ordner", file = "Neue Datei", rename = "Umbenennen", move = "Verschieben", chmod = "Berechtigungen"; var id: String { rawValue } }
+        enum FileAction: String, Identifiable { case folder = "New Folder", file = "New File", rename = "Rename", move = "Move", chmod = "Permissions"; var id: String { rawValue } }
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label(pane.remote ? "Remote" : "Lokal", systemImage: pane.remote ? "server.rack" : "laptopcomputer").font(.headline)
+                Label(pane.remote ? "Remote" : "Local", systemImage: pane.remote ? "server.rack" : "laptopcomputer").font(.headline)
                 Spacer()
-                if pane.busy { ProgressView().controlSize(.small); if pane.cancellable { Button { pane.cancel() } label: { Image(systemName: "xmark.circle") }.buttonStyle(.plain).accessibilityLabel("Vorgang abbrechen") } }
-                Button { workspace.transfer(from: pane) } label: { Image(systemName: pane.remote ? "arrow.down.to.line" : "arrow.up.to.line") }.accessibilityLabel(pane.remote ? "Herunterladen" : "Hochladen").help(pane.remote ? "Auswahl herunterladen" : "Auswahl hochladen").disabled(pane.selected.isEmpty)
+                if pane.busy { ProgressView().controlSize(.small); if pane.cancellable { Button { pane.cancel() } label: { Image(systemName: "xmark.circle") }.buttonStyle(.plain).accessibilityLabel("Cancel Operation") } }
+                Button { workspace.transfer(from: pane) } label: { Image(systemName: pane.remote ? "arrow.down.to.line" : "arrow.up.to.line") }.accessibilityLabel(pane.remote ? "Download" : "Upload").help(pane.remote ? "Download Selection" : "Upload Selection").disabled(pane.selected.isEmpty)
                 Menu {
-                    Button("Neuer Ordner…") { action = .folder }
-                    Button("Neue Datei…") { action = .file }
-                    Toggle("Versteckte Dateien", isOn: $pane.showHidden)
-                    Picker("Sortieren", selection: $pane.sort) { ForEach(PaneModel.SortField.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                    Toggle("Aufsteigend", isOn: $pane.ascending)
+                    Button("New Folder…") { action = .folder }
+                    Button("New File…") { action = .file }
+                    Toggle("Show Hidden Files", isOn: $pane.showHidden)
+                    Picker("Sort By", selection: $pane.sort) { ForEach(PaneModel.SortField.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+                    Toggle("Ascending", isOn: $pane.ascending)
                 } label: {
                     Image(systemName: "ellipsis.circle").padding(.trailing, 8)
                 }.menuStyle(.borderlessButton).frame(width: 40)
@@ -31,7 +30,7 @@ struct FilePane: View {
                 Button { pane.back() } label: { Image(systemName: "chevron.left") }.disabled(pane.history.back.isEmpty)
                 Button { pane.forward() } label: { Image(systemName: "chevron.right") }.disabled(pane.history.forward.isEmpty)
                 Button { pane.up() } label: { Image(systemName: "arrow.up") }
-                TextField("Pfad", text: $pane.pathInput).textFieldStyle(.roundedBorder).onSubmit { pane.navigate(pane.pathInput) }.accessibilityLabel(pane.remote ? "Remote-Pfad" : "Lokaler Pfad")
+                TextField("Path", text: $pane.pathInput).textFieldStyle(.roundedBorder).onSubmit { pane.navigate(pane.pathInput) }.accessibilityLabel(pane.remote ? "Remote Path" : "Local Path")
             }.buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
@@ -43,19 +42,26 @@ struct FilePane: View {
                     }
                 }.buttonStyle(.plain).font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
             }
-            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Dateien filtern", text: $pane.filter).textFieldStyle(.plain) }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
+            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Filter files", text: $pane.filter).textFieldStyle(.plain) }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
             Divider()
             FileOutlineView(pane: pane, workspace: workspace, tabID: tabID,
-                            open: open, action: { action = $0 }, delete: { deleteAlert = true })
+                            open: open, openWith: { entry, app in open(entry, application: app) }, action: { action = $0 }, delete: { deleteAlert = true })
+            if let message = pane.operationMessage {
+                HStack(alignment: .top) {
+                    Image(systemName: "trash").foregroundStyle(.secondary)
+                    Text(message).font(.caption).lineLimit(2).textSelection(.enabled)
+                    Spacer(minLength: 0)
+                }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(.quaternary.opacity(0.4))
+            }
             if let error = pane.error {
                 HStack(alignment: .top) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                     Text(error).font(.caption).textSelection(.enabled)
                     Spacer()
-                    Button("Erneut versuchen") { pane.refresh() }
+                    Button("Try Again") { pane.refresh() }
                 }.padding(10).background(Color.orange.opacity(0.08))
             }
-            HStack { Text("\(pane.visible.count) Objekte"); Spacer(); Text("\(pane.selection.count) ausgewählt") }.font(.caption).foregroundStyle(.secondary).padding(8)
+            HStack { Text("\(pane.visible.count) items"); Spacer(); Text("\(pane.selection.count) selected") }.font(.caption).foregroundStyle(.secondary).padding(8)
         }
         .onTapGesture { workspace.activeRemote = pane.remote }
         .onReceive(NotificationCenter.default.publisher(for: .paneCommand)) { notification in
@@ -78,11 +84,10 @@ struct FilePane: View {
                 }
             }
         }
-        .sheet(item: $edit) { session in RemoteEditView(session: session) { pane.refresh() } }
-        .alert(pane.remote ? "Auswahl endgültig löschen?" : "Auswahl in den Papierkorb verschieben?", isPresented: $deleteAlert) {
-            Button("Abbrechen", role: .cancel) {}
-            Button("\(pane.selected.count) Objekte löschen", role: .destructive) { pane.deleteSelection() }
-        } message: { Text(pane.remote ? "Ordner und ihr gesamter Inhalt werden unwiderruflich entfernt." : "Die Dateien werden in den macOS-Papierkorb verschoben.") }
+        .alert(pane.remote ? "Permanently delete the selection?" : "Move the selection to Trash?", isPresented: $deleteAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete \(pane.selected.count) items", role: .destructive) { pane.deleteSelection() }
+        } message: { Text(pane.remote ? "Folders and all their contents will be permanently deleted." : "The files will be moved to the macOS Trash.") }
     }
     private func acceptDrop(_ providers: [NSItemProvider], directory: String) -> Bool {
         guard !pane.busy else { return false }
@@ -105,12 +110,16 @@ struct FilePane: View {
         }
         return accepted
     }
-    private func inputLabel(_ action: FileAction) -> String { action == .chmod ? "Oktale Rechte, z. B. 644" : action == .move ? "Absoluter Zielordner" : "Name" }
-    private func open(_ entry: FileEntry) {
+    private func inputLabel(_ action: FileAction) -> String { action == .chmod ? "Octal permissions, e.g. 644" : action == .move ? "Absolute destination folder" : "Name" }
+    private func open(_ entry: FileEntry) { open(entry, application: nil) }
+    private func open(_ entry: FileEntry, application: URL?) {
         if entry.isDirectory { pane.navigate(entry.path) }
-        else if entry.isSymlink { pane.error = "Symbolische Links bitte über einen expliziten Verzeichnispfad öffnen." }
-        else if let profile = pane.profile { edit = RemoteEdit(profile: profile, entry: entry) }
-        else { NSWorkspace.shared.open(URL(fileURLWithPath: entry.path)) }
+        else if entry.isSymlink { pane.error = "Open symbolic links using an explicit destination path." }
+        else if !entry.isRegular { pane.error = "Only regular files can be opened in an application." }
+        else if let profile = pane.profile { workspace.edits.open(profile: profile, entry: entry, application: application) }
+        else {
+            Task { do { try await EditorApplications.open(URL(fileURLWithPath: entry.path), application: application) } catch { pane.error = error.localizedDescription } }
+        }
     }
 
 }
@@ -126,7 +135,7 @@ struct InputSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(title).font(.title2.bold())
             TextField(label, text: $value).textFieldStyle(.roundedBorder).onSubmit { save() }
-            HStack { Spacer(); Button("Abbrechen", role: .cancel) { dismiss() }; Button("Bestätigen") { save() }.keyboardShortcut(.defaultAction).disabled(value.isEmpty) }
+            HStack { Spacer(); Button("Cancel", role: .cancel) { dismiss() }; Button("Confirm") { save() }.keyboardShortcut(.defaultAction).disabled(value.isEmpty) }
         }.padding(24).frame(width: 420)
     }
     private func save() { guard !value.isEmpty else { return }; submit(value); dismiss() }
@@ -138,13 +147,13 @@ struct QueueView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Transfers").font(.headline)
-                Picker("Konflikte", selection: $queue.policy) { ForEach(ConflictPolicy.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 230)
-                Stepper("Parallel: \(queue.limit)", value: $queue.limit, in: 1...8).frame(width: 140)
+                Picker("Conflicts", selection: $queue.policy) { ForEach(ConflictPolicy.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 230)
+                Stepper("Concurrent: \(queue.limit)", value: $queue.limit, in: 1...8).frame(width: 140)
                 Spacer()
-                Button("Aufräumen") { queue.clearFinished() }
+                Button("Clear Finished") { queue.clearFinished() }
             }.padding(10)
-            if queue.policy == .resume { Text("Fortsetzen nur bei identischem Datei-Präfix verwenden; SFTP prüft vorhandene Teilinhalte nicht.").font(.caption).foregroundStyle(.orange) }
-            if queue.jobs.isEmpty { Text("Keine Transfers in der Warteschlange").foregroundStyle(.secondary).frame(maxHeight: .infinity) }
+            if queue.policy == .resume { Text("Resume only when the existing file prefix is identical. SFTP does not verify partial file contents.").font(.caption).foregroundStyle(.orange) }
+            if queue.jobs.isEmpty { Text("No transfers in the queue").foregroundStyle(.secondary).frame(maxHeight: .infinity) }
             else { ScrollView { LazyVStack(spacing: 0) { ForEach(queue.jobs) { job in TransferRow(job: job, queue: queue) } } } }
         }.background(.background)
     }
@@ -152,21 +161,45 @@ struct QueueView: View {
 struct TransferRow: View {
     @ObservedObject var job: TransferJob
     @ObservedObject var queue: TransferQueue
+    @State private var showWarnings = false
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: job.upload ? "arrow.up.circle" : "arrow.down.circle").foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 4) {
-                HStack { Text(job.source.name).lineLimit(1); Text(job.profile.title).font(.caption).foregroundStyle(.secondary); Spacer(); Text(job.state.rawValue).font(.caption) }
-                ProgressView(value: Double(min(job.transferred, job.total)), total: Double(max(1, job.total)))
+                HStack { Text(job.source.name).lineLimit(1); Text(job.profile.title).font(.caption).foregroundStyle(.secondary); Spacer(); Text(job.statusText).font(.caption).foregroundStyle(job.state == .completed && !job.warnings.isEmpty ? Color.orange : Color.secondary) }
+                ProgressView(value: job.state == .completed ? 1 : Double(min(job.transferred, job.total)) / Double(max(1, job.total)), total: 1)
+                Text(job.fileProgressText).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                if !job.warnings.isEmpty {
+                    Button { showWarnings = true } label: {
+                        Label("\(job.warnings.count) items skipped – Details", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }.buttonStyle(.plain)
+                    .popover(isPresented: $showWarnings) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Skipped Items").font(.headline)
+                            Text("Links and special files are skipped. All other files will continue to transfer.").font(.caption).foregroundStyle(.secondary)
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 12) {
+                                    ForEach(job.warnings) { warning in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(warning.reason.rawValue).font(.caption).foregroundStyle(.orange)
+                                            Text(warning.path).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                                        }
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }.frame(maxHeight: 280)
+                        }.padding(16).frame(width: 500)
+                    }
+                }
                 if let error = job.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-                else { Text("\(ByteCountFormatter.string(fromByteCount: Int64(clamping: job.transferred), countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: Int64(clamping: job.total), countStyle: .file)) · \(ByteCountFormatter.string(fromByteCount: Int64(job.speed), countStyle: .file))/s · Rest \(job.eta)").font(.caption2).foregroundStyle(.secondary) }
+                else { Text("\(ByteCountFormatter.string(fromByteCount: Int64(clamping: job.transferred), countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: Int64(clamping: job.total), countStyle: .file)) · \(ByteCountFormatter.string(fromByteCount: Int64(job.speed), countStyle: .file))/s · Remaining \(job.eta)").font(.caption2).foregroundStyle(.secondary) }
             }
             if !job.terminal {
                 Button { queue.pause(job) } label: { Image(systemName: job.state == .paused ? "play.fill" : "pause.fill") }.buttonStyle(.borderless)
                 Button { queue.cancel(job) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
             } else if job.state == .failed || job.state == .cancelled {
-                Button("Fortsetzen") { queue.retry(job, resume: true) }.buttonStyle(.borderless).help("Nur verwenden, wenn die Quelldatei seit dem Abbruch unverändert ist").disabled(!queue.canRetry(job))
-                Button("Erneut") { queue.retry(job) }.buttonStyle(.borderless).disabled(!queue.canRetry(job))
+                Button("Resume") { queue.retry(job, resume: true) }.buttonStyle(.borderless).help("Use only if the source file has not changed since the transfer was interrupted").disabled(!queue.canRetry(job))
+                Button("Retry") { queue.retry(job) }.buttonStyle(.borderless).disabled(!queue.canRetry(job))
             }
         }.padding(.horizontal, 12).padding(.vertical, 7)
     }
@@ -179,8 +212,8 @@ struct StatusBar: View {
     var body: some View {
         HStack {
             Circle().fill(remote.busy ? .orange : remote.error == nil && !remote.entries.isEmpty ? .green : .secondary).frame(width: 6, height: 6)
-            Text(remote.busy ? "Verbinde / lade Verzeichnis…" : remote.error == nil ? "\(tab.profile.host) · SSH / SFTP" : "Verbindung prüfen")
-            Spacer(); Text("\(queue.jobs.filter { !$0.terminal }.count) Transfers offen")
+            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · SSH / SFTP" : "Check Connection")
+            Spacer(); Text("\(queue.jobs.filter { !$0.terminal }.count) transfers pending")
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 7).background(.bar)
     }
 }

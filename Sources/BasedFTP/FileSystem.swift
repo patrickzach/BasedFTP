@@ -2,7 +2,7 @@ import Foundation
 
 enum LocalFiles {
     static func canonicalPath(_ path: String) throws -> String {
-        guard let resolved = Darwin.realpath(path, nil) else { throw FTPError.message("Pfad kann nicht aufgelöst werden: " + String(cString: strerror(errno))) }
+        guard let resolved = Darwin.realpath(path, nil) else { throw FTPError.message("Could not resolve path: " + String(cString: strerror(errno))) }
         defer { free(resolved) }; return String(cString: resolved)
     }
     static func entry(_ url: URL) throws -> FileEntry {
@@ -15,7 +15,7 @@ enum LocalFiles {
         try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path), includingPropertiesForKeys: nil).map(entry)
     }
     static func validName(_ name: String) throws {
-        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else { throw FTPError.message("Ungültiger Dateiname.") }
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else { throw FTPError.message("Invalid filename.") }
     }
 }
 
@@ -35,6 +35,7 @@ enum LocalFiles {
     private var childOperations: [String: OperationControl] = [:]
     @Published var busy = false
     @Published var cancellable = false
+    @Published var operationMessage: String?
     @Published var error: String?
     @Published var showHidden = false
     @Published var filter = ""
@@ -43,7 +44,7 @@ enum LocalFiles {
     @Published private(set) var history = NavigationHistory()
     private var generation = UUID()
     private var operation: OperationControl?
-    enum SortField: String, CaseIterable { case name = "Name", size = "Größe", kind = "Typ", modified = "Geändert" }
+    enum SortField: String, CaseIterable { case name = "Name", size = "Size", kind = "Kind", modified = "Modified" }
     init(profile: ServerProfile? = nil) {
         self.profile = profile; remote = profile != nil
         let initial = profile?.initialPath ?? FileManager.default.homeDirectoryForCurrentUser.path
@@ -118,7 +119,7 @@ enum LocalFiles {
         operation?.cancel()
         childOperations.values.forEach { $0.cancel() }; childOperations.removeAll(); loadingChildren = []
         let token = UUID(); generation = token
-        let control = OperationControl(); operation = control; busy = true; cancellable = true; error = nil
+        let control = OperationControl(); operation = control; busy = true; cancellable = true; error = nil; operationMessage = nil
         let profile = profile; let oldPath = path
         Task {
             do {
@@ -147,21 +148,34 @@ enum LocalFiles {
     func forward() { if let target = history.goForward(current: path) { navigate(target, record: false) } }
     func up() { navigate((path as NSString).deletingLastPathComponent.isEmpty ? "/" : (path as NSString).deletingLastPathComponent) }
     func perform(_ work: @escaping @Sendable (SFTPClient?) throws -> Void) {
-        guard !busy else { return }; busy = true; error = nil; cancellable = remote
+        perform(status: nil) { client, _ in try work(client) }
+    }
+    private func perform(status: String?, _ work: @escaping @Sendable (SFTPClient?, @escaping @Sendable (String) -> Void) throws -> Void) {
+        guard !busy else { return }; busy = true; error = nil; cancellable = remote; operationMessage = status
         childOperations.values.forEach { $0.cancel() }; childOperations.removeAll(); loadingChildren = []
         let control = OperationControl(); operation = control
         let token = UUID(); generation = token
         let profile = profile
+        let update: @Sendable (String) -> Void = { message in
+            Task { @MainActor in guard self.generation == token, self.busy else { return }; self.operationMessage = message }
+        }
         Task {
             do {
                 try await Task.detached {
                     try control.touch()
-                    if let profile { let client = try SFTPClient(profile: profile, control: control); defer { client.close() }; try work(client) }
-                    else { try work(nil) }
+                    if let profile { let client = try SFTPClient(profile: profile, control: control); defer { client.close() }; try work(client, update) }
+                    else { try work(nil, update) }
                 }.value
                 guard generation == token else { return }
-                busy = false; cancellable = false; refresh()
-            } catch { guard generation == token else { return }; self.error = error.localizedDescription; busy = false; cancellable = false }
+                busy = false; cancellable = false; operationMessage = nil; refresh()
+            } catch {
+                guard generation == token else { return }
+                let details = status != nil ? self.operationMessage.map { "\n\($0)" } ?? "" : ""
+                self.error = error.localizedDescription + details
+                busy = false; cancellable = false; operationMessage = nil
+                // Failed batches may already have removed some children.
+                children = [:]
+            }
         }
     }
     func create(name: String, directory: Bool) {
@@ -171,7 +185,7 @@ enum LocalFiles {
             if let client { if directory { try client.mkdir(destination) } else { try client.createFile(destination) } }
             else if directory { try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: false) }
             else {
-                guard !FileManager.default.fileExists(atPath: destination) else { throw FTPError.message("Datei existiert bereits.") }
+                guard !FileManager.default.fileExists(atPath: destination) else { throw FTPError.message("The file already exists.") }
                 let fd = Darwin.open(destination, O_WRONLY | O_CREAT | O_EXCL, 0o644)
                 guard fd >= 0 else { throw FTPError.message(String(cString: strerror(errno))) }; Darwin.close(fd)
             }
@@ -181,17 +195,17 @@ enum LocalFiles {
         do { try LocalFiles.validName(name) } catch { self.error = error.localizedDescription; return }
         let destination = FileEntry.join((entry.path as NSString).deletingLastPathComponent, name)
         perform { client in
-            if let client { guard try !client.exists(destination) else { throw FTPError.message("Ziel existiert bereits.") }; try client.rename(entry.path, destination) }
+            if let client { guard try !client.exists(destination) else { throw FTPError.message("The destination already exists.") }; try client.rename(entry.path, destination) }
             else { try FileManager.default.moveItem(atPath: entry.path, toPath: destination) }
         }
     }
     nonisolated static func validateMove(_ entries: [FileEntry], to destination: String) throws {
-        guard destination.hasPrefix("/"), !destination.contains("\0") else { throw FTPError.message("Bitte einen absoluten Zielordner verwenden.") }
+        guard destination.hasPrefix("/"), !destination.contains("\0") else { throw FTPError.message("Please enter an absolute destination folder.") }
         let destination = (destination as NSString).standardizingPath
         for entry in entries {
             let source = (entry.path as NSString).standardizingPath
-            guard destination != source, !entry.isDirectory || !destination.hasPrefix(source + "/") else { throw FTPError.message("Ein Ordner kann nicht in sich selbst oder einen Unterordner verschoben werden.") }
-            guard (source as NSString).deletingLastPathComponent != destination else { throw FTPError.message("Die Auswahl befindet sich bereits in diesem Ordner.") }
+            guard destination != source, !entry.isDirectory || !destination.hasPrefix(source + "/") else { throw FTPError.message("A folder cannot be moved into itself or one of its subfolders.") }
+            guard (source as NSString).deletingLastPathComponent != destination else { throw FTPError.message("The selection is already in this folder.") }
         }
     }
     func move(_ entries: [FileEntry], to destination: String) {
@@ -207,27 +221,30 @@ enum LocalFiles {
             // Validate every target before moving anything; never overwrite on drop.
             for entry in entries {
                 let target = FileEntry.join(destination, entry.name)
-                if let client { guard try !client.exists(target) else { throw FTPError.message("Ziel existiert: \(target)") } }
-                else { guard !FileManager.default.fileExists(atPath: target) else { throw FTPError.message("Ziel existiert: \(target)") } }
+                if let client { guard try !client.exists(target) else { throw FTPError.message("The destination already exists: \(target)") } }
+                else { guard !FileManager.default.fileExists(atPath: target) else { throw FTPError.message("The destination already exists: \(target)") } }
             }
             for entry in entries {
                 let target = FileEntry.join(destination, entry.name)
-                if let client { guard try !client.exists(target) else { throw FTPError.message("Ziel existiert: \(target)") }; try client.rename(entry.path, target) }
+                if let client { guard try !client.exists(target) else { throw FTPError.message("The destination already exists: \(target)") }; try client.rename(entry.path, target) }
                 else { try FileManager.default.moveItem(atPath: entry.path, toPath: target) }
             }
         }
     }
     func deleteSelection() {
         let entries = selected
-        perform { client in
-            for entry in entries {
-                if let client { try client.delete(entry) }
-                else { try FileManager.default.trashItem(at: URL(fileURLWithPath: entry.path), resultingItemURL: nil) }
+        perform(status: remote ? "Preparing deletion…" : "Moving to Trash…") { client, update in
+            if let client { try client.delete(entries) { update($0.text) } }
+            else {
+                for (index, entry) in entries.enumerated() {
+                    update("Trash: \(entry.path) · \(index) of \(entries.count) items")
+                    try FileManager.default.trashItem(at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)
+                }
             }
         }
     }
     func chmod(_ mode: String) {
-        guard let value = UInt32(mode, radix: 8), value <= 0o7777 else { error = "Berechtigungen als Oktalzahl eingeben, z. B. 755."; return }
+        guard let value = UInt32(mode, radix: 8), value <= 0o7777 else { error = "Enter permissions as an octal number, such as 755."; return }
         let entries = selected
         perform { client in
             for entry in entries {
@@ -236,7 +253,10 @@ enum LocalFiles {
             }
         }
     }
-    func cancel() { childOperations.values.forEach { $0.cancel() }; childOperations.removeAll(); loadingChildren = []; operation?.cancel(); generation = UUID(); busy = false; cancellable = false }
+    func cancel() {
+        if let operationMessage { error = "Operation cancelled. Items already deleted cannot be restored.\n" + operationMessage }
+        operationMessage = nil
+        childOperations.values.forEach { $0.cancel() }; childOperations.removeAll(); loadingChildren = []; operation?.cancel(); generation = UUID(); busy = false; cancellable = false }
 }
 
 import Darwin
