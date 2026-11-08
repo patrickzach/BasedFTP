@@ -14,6 +14,8 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- Updated the GitHub Pages landing page with the supplied standalone Astro export, including FTP/FTPS/SFTP copy and embedded assets.
+
 - Explicit FTPS (default port 21) and implicit FTPS (default port 990), with TLS 1.2+ required for both control and data channels and no plaintext fallback.
 - Certificate chain/hostname verification, optional per-profile PEM CA bundles without changing system trust, distinct FTPS Keychain passwords, and TLS mode/status UI.
 - Consistent certificate diagnostics, including failed data-channel verification masked by generic FTP response errors and certificate changes during supplemental LIST requests.
