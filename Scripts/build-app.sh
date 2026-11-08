@@ -1,6 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Never silently replace a stable signature with an ad hoc identity.
+SIGNING_IDENTITY="${BASEDFTP_SIGNING_IDENTITY:-BasedFTP Local Development}"
+if [[ "$SIGNING_IDENTITY" == '-' ]]; then
+    printf '%s\n' 'Warning: explicit ad hoc build; Keychain approvals may recur after rebuilding.' >&2
+elif ! /usr/bin/security find-identity -v -p codesigning | /usr/bin/grep -F -- "$SIGNING_IDENTITY" >/dev/null; then
+    printf '%s\n' 'Signing identity unavailable. Run bash Scripts/setup-local-signing.sh once, or set BASEDFTP_SIGNING_IDENTITY to your certificate name/SHA-1.' >&2
+    exit 1
+fi
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/module-cache"
 # Cross-compile each slice against the same minimum macOS version.
@@ -46,6 +54,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-codesign --force --sign - "$APP"
+BASEDFTP_SIGNING_IDENTITY="$SIGNING_IDENTITY" bash Scripts/build-credential-helper.sh "$APP/Contents/Helpers"
+codesign --force --sign "$SIGNING_IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 printf 'Universal app (arm64 + x86_64): %s\n' "$APP"

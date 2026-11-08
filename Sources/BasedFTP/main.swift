@@ -9,12 +9,12 @@ if let profile = ProcessInfo.processInfo.environment["BASEDFTP_PROFILE"],
    CommandLine.arguments.count > 1 {
     let prompt = CommandLine.arguments.dropFirst().joined(separator: " ").lowercased()
     let purpose = prompt.contains("passphrase") ? "passphrase" : "password"
-    guard let secret = CredentialStore.read(account: profile + "." + purpose) else { exit(1) }
+    guard let secret = try? CredentialStore.read(account: profile + "." + purpose) else { exit(1) }
     FileHandle.standardOutput.write(Data((secret + "\n").utf8)); exit(0)
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationWillTerminate(_ notification: Notification) { OperationControl.cancelAll() }
+    func applicationWillTerminate(_ notification: Notification) { OperationControl.cancelAll(); CredentialStore.clearSession() }
 }
 
 struct BasedFTPApp: App {

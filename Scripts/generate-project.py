@@ -8,7 +8,7 @@ def ident(s): return hashlib.sha1(s.encode()).hexdigest()[:24].upper()
 def obj(key, text):
     uid = ident(key); objects.append(f'{uid} = {{ {text} }};'); return uid
 def quote(s): return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
-sources = sorted((root/'Sources/BasedFTP').glob('*.swift'))
+sources = sorted((root/'Sources/BasedFTP').glob('*.swift')) + sorted((root/'Sources/CredentialSupport').glob('*.swift'))
 refs=[]; builds=[]
 for source in sources:
     rel=str(source.relative_to(root))
@@ -35,21 +35,22 @@ group=obj('group', f'isa = PBXGroup; children = ({",".join(refs)},{testGroup},{p
 sourcesPhase=obj('sourcesphase', f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(builds)},); runOnlyForDeploymentPostprocessing = 0;')
 frameworks=obj('frameworks','isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
 resources=obj('resources',f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({iconBuild},{licenseBuild},); runOnlyForDeploymentPostprocessing = 0;')
+helperPhase=obj('credentialhelperphase', 'isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/bash; shellScript = "bash \\"$SRCROOT/Scripts/build-credential-helper.sh\\" \\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\\""; name = "Build stable credential helper";')
 configs=[]; projectConfigs=[]
 for mode in ['Debug','Release']:
-    settings='SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CCurl"; OTHER_LDFLAGS = "$(inherited) -lcurl"; ARCHS = "arm64 x86_64"; ONLY_ACTIVE_ARCH = NO; CODE_SIGN_STYLE = Automatic; CODE_SIGN_IDENTITY = "-"; COMBINE_HIDPI_IMAGES = YES; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools"; INFOPLIST_KEY_CFBundleDisplayName = BasedFTP; INFOPLIST_KEY_CFBundleDevelopmentRegion = en; INFOPLIST_KEY_CFBundleIconFile = AppIcon; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; PRODUCT_BUNDLE_IDENTIFIER = app.basedftp.client; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SWIFT_EMIT_LOC_STRINGS = YES;'
+    settings='SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CCurl"; OTHER_LDFLAGS = "$(inherited) -lcurl"; ARCHS = "arm64 x86_64"; ONLY_ACTIVE_ARCH = NO; CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "BasedFTP Local Development"; COMBINE_HIDPI_IMAGES = YES; ENABLE_USER_SCRIPT_SANDBOXING = NO; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools"; INFOPLIST_KEY_CFBundleDisplayName = BasedFTP; INFOPLIST_KEY_CFBundleDevelopmentRegion = en; INFOPLIST_KEY_CFBundleIconFile = AppIcon; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; PRODUCT_BUNDLE_IDENTIFIER = app.basedftp.client; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SWIFT_EMIT_LOC_STRINGS = YES;'
     if mode=='Debug': settings+=' SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; ENABLE_TESTABILITY = YES;'
     else: settings+=' SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O";'
     configs.append(obj('target'+mode,f'isa = XCBuildConfiguration; buildSettings = {{ {settings} }}; name = {mode};'))
     projectConfigs.append(obj('project'+mode,f'isa = XCBuildConfiguration; buildSettings = {{ SDKROOT = macosx; CLANG_ENABLE_MODULES = YES; }}; name = {mode};'))
 configList=obj('configlist',f'isa = XCConfigurationList; buildConfigurations = ({",".join(configs)},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
 projectConfigList=obj('projectconfiglist',f'isa = XCConfigurationList; buildConfigurations = ({",".join(projectConfigs)},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
-target=obj('target', f'isa = PBXNativeTarget; buildConfigurationList = {configList}; buildPhases = ({sourcesPhase},{frameworks},{resources},); buildRules = (); dependencies = (); name = BasedFTP; productName = BasedFTP; productReference = {product}; productType = "com.apple.product-type.application";')
+target=obj('target', f'isa = PBXNativeTarget; buildConfigurationList = {configList}; buildPhases = ({sourcesPhase},{frameworks},{resources},{helperPhase},); buildRules = (); dependencies = (); name = BasedFTP; productName = BasedFTP; productReference = {product}; productType = "com.apple.product-type.application";')
 testPhase=obj('testphase', f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(testBuilds)},); runOnlyForDeploymentPostprocessing = 0;')
 testFrameworks=obj('testframeworks', 'isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
 testConfigs=[]
 for mode in ['Debug','Release']:
-    testConfigs.append(obj('test'+mode, f'isa = XCBuildConfiguration; buildSettings = {{ SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CCurl"; OTHER_LDFLAGS = "$(inherited) -lcurl"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.basedftp.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; MACOSX_DEPLOYMENT_TARGET = 14.0; CODE_SIGN_STYLE = Automatic; CODE_SIGN_IDENTITY = "-"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BasedFTP.app/Contents/MacOS/BasedFTP"; BUNDLE_LOADER = "$(TEST_HOST)"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks"; }}; name = {mode};'))
+    testConfigs.append(obj('test'+mode, f'isa = XCBuildConfiguration; buildSettings = {{ SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CCurl"; OTHER_LDFLAGS = "$(inherited) -lcurl"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.basedftp.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; MACOSX_DEPLOYMENT_TARGET = 14.0; CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "BasedFTP Local Development"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BasedFTP.app/Contents/MacOS/BasedFTP"; BUNDLE_LOADER = "$(TEST_HOST)"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks"; }}; name = {mode};'))
 testConfigList=obj('testconfiglist', f'isa = XCConfigurationList; buildConfigurations = ({",".join(testConfigs)},); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
 proxy=obj('testproxy', f'isa = PBXContainerItemProxy; containerPortal = {ident("project")}; proxyType = 1; remoteGlobalIDString = {target}; remoteInfo = BasedFTP;')
 dependency=obj('testdependency', f'isa = PBXTargetDependency; target = {target}; targetProxy = {proxy};')

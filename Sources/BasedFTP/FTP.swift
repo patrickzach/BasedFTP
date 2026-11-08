@@ -125,7 +125,7 @@ final class FTPClient: RemoteFileSystem {
         try profile.validate()
         guard profile.transport != .sftp else { throw FTPError.message("An FTP or FTPS profile is required.") }
         self.profile = profile; self.control = control
-        self.password = password ?? CredentialStore.read(account: profile.id.uuidString + "." + profile.passwordPurpose) ?? ""
+        self.password = try password ?? CredentialStore.read(account: profile.id.uuidString + "." + profile.passwordPurpose) ?? ""
         guard !(self.password ?? "").unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw FTPError.message("FTP passwords cannot contain control characters.")
         }

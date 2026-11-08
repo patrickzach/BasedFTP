@@ -6,6 +6,10 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Fixed
 
+- Stable local Keychain access across main-app rebuilds: reusable signing identity and a cached universal credential helper with mutual certificate/identifier checks.
+- Password changes update existing Keychain entries rather than deleting their access grants. Successful reads are serialized and cached per app session; denied reads surface as errors instead of silently becoming empty FTP passwords.
+- Added local signing setup/build tooling, Xcode helper integration, concurrent credential-cache tests, and real cross-build Keychain regression tests with authorization UI disabled.
+
 - Restored Command-W immediately after opening a tab, without first opening the File menu. App commands now observe the active scene's workspace/profile objects rather than unobserved focused values.
 
 ### Added

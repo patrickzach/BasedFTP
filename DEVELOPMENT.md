@@ -1,6 +1,6 @@
 # Developer guide
 
-A quick map of the codebase, reflecting FTPS implementation step 5. Start with [README.md](README.md) for builds and usage; [VALIDATION.md](VALIDATION.md) records checks actually performed.
+A quick map of the codebase, including FTPS step 5 and stable local Keychain access. Start with [README.md](README.md) for builds and usage; [VALIDATION.md](VALIDATION.md) records checks actually performed.
 
 ## How the pieces fit
 
@@ -42,7 +42,10 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 | [Transfers.swift](Sources/BasedFTP/Transfers.swift) | Queue scheduling, job state, conflict handling, recursion, staging, resume checkpoints, byte/file counters, warnings, and readable remaining time. |
 | [RemoteEdit.swift](Sources/BasedFTP/RemoteEdit.swift) | Working copies, stable SHA256 snapshots, change monitoring, serialized automatic uploads, retry/stop, and editing status views. Available for SFTP only. |
 | [EditorApplications.swift](Sources/BasedFTP/EditorApplications.swift) | Installed editor discovery, Open With menus, opening files, and BasedFTP-only per-extension preferences. |
-| [Security.swift](Sources/BasedFTP/Security.swift) | `CredentialStore` for Keychain access and `ProfileStore` for secret-free profile JSON, favorites/recents, and SSH alias import. |
+| [CredentialKeychain.swift](Sources/CredentialSupport/CredentialKeychain.swift) | Shared request/response types and validated, in-place Keychain operations for the fixed service. |
+| [CredentialIdentity.swift](Sources/CredentialSupport/CredentialIdentity.swift) | Mutual certificate/identifier verification of the app and helper. |
+| [Credential helper](Sources/BasedFTPCredentials/main.swift) | Authenticates the caller, accepts one bounded JSON request on stdin, and returns credentials/errors only through stdout. |
+| [Security.swift](Sources/BasedFTP/Security.swift) | `CredentialStore`/`CredentialSession` for serialized, cached helper requests and `ProfileStore` for secret-free profile JSON, favorites/recents, and SSH alias import. |
 
 [`Sources/CCurl/`](Sources/CCurl/) contains the system-library module map and [`CCurl.h`](Sources/CCurl/include/CCurl.h). Its small typed adapters let Swift call libcurl's variadic configuration API. It contains no FTP implementation or bundled libcurl source.
 
@@ -98,12 +101,21 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 | Editor monitoring or Open With | `RemoteEdit.swift` / `EditorApplications.swift` |
 | Authentication/profile storage | `Security.swift`, `ProfileEditor.swift`, protocol-specific backend |
 
+## Credential helper and signing
+
+`Sources/CredentialSupport/` is shared by the app and the small `Sources/BasedFTPCredentials/main.swift` executable. `CredentialKeychain.perform` restricts accounts to profile UUIDs and known credential purposes, updates existing items with `SecItemUpdate`, and surfaces read/authorization errors. `CredentialIdentity` authenticates the app/helper identifiers and matching leaf signing certificate in both directions. No caller can choose another Keychain service. `Security.swift` serializes successful credential loads in `CredentialSession` and sends bundle requests over private pipes; unbundled SwiftPM tools/tests use the same Keychain implementation directly.
+
+The helper is cached independently of `.build/` using its source/build-script hash and signing certificate. `Scripts/build-credential-helper.sh` compiles/signs it once, verifies cached signatures, and copies identical bytes into each bundle. A per-cache build lock prevents two concurrent builds from replacing the helper with different code hashes. Xcode invokes this script in a build phase; `build-app.sh` invokes it before signing the outer app. Keep the cache and signing identity; helper changes legitimately require renewed Keychain approval. Do not broaden Keychain ACLs or partition lists to hide authorization errors.
+
 ## Build tools and tests
 
 [`Package.swift`](Package.swift) and [`BasedFTP.xcodeproj`](BasedFTP.xcodeproj/) use the same Swift sources. After adding/removing a Swift file, run `python3 Scripts/generate-project.py`; avoid edits to generated project settings without updating that script too.
 
 | Script | Purpose |
 | --- | --- |
+| [setup-local-signing.sh](Scripts/setup-local-signing.sh) | One-time local certificate/private-key import and user-scoped Code Signing trust. Temporary private-key export files are removed; TLS trust is unchanged. |
+| [build-credential-helper.sh](Scripts/build-credential-helper.sh) | Builds or reuses the stable universal credential helper and verifies its certificate-bound signature. |
+| [keychain-integration-test.sh](Scripts/keychain-integration-test.sh) | Uses random synthetic credentials, disables authorization UI, and tests cross-build access plus rejection of unrelated callers. |
 | [build-app.sh](Scripts/build-app.sh) | Builds arm64/x86_64 release slices, combines them, copies resources/license, and signs/verifies `build/BasedFTP.app`. |
 | [test.sh](Scripts/test.sh) | Runs SwiftPM tests. Network integration tests explicitly skip when their servers are not configured. |
 | [integration-test.sh](Scripts/integration-test.sh) | Starts isolated loopback SSH tests and additional key variants. |
@@ -111,6 +123,6 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 | [ftps-integration-test.sh](Scripts/ftps-integration-test.sh) | Generates an ephemeral test CA and loopback explicit/implicit TLS servers, including invalid control/data certificates and TLS-refusal cases. |
 | [render-icon.swift](Scripts/render-icon.swift) | Generates the app icon assets. |
 
-Tests live in [`Tests/BasedFTPTests/`](Tests/BasedFTPTests/): `CoreTests` covers protocol/security and SFTP operations; `RemoteFileSystemTests` the shared contract; `TreeTests` navigation/moves; `WorkspaceTests` tabs/bookmarks; `RemoteEditTests` snapshots/automatic editing; `FTPTests` profiles/listing/gates; `FTPTransferTests` transfers/recovery/queue behavior; `FTPFileOperationsTests` recursive operations, link safety, permissions, and panel/drop routing; `FTPSTests` TLS modes, trust failures, protected data, resume, and queue integration. [`Tests/Fixtures/`](Tests/Fixtures/) holds the real FTP/FTPS test-server setup, ephemeral PKI generator, and a test-only SFTP reordering/short-read fixture.
+Tests live in [`Tests/BasedFTPTests/`](Tests/BasedFTPTests/): `CredentialSessionTests` covers concurrent reads, account isolation, cache changes/deletion/clear, and error invalidation; `CoreTests` covers protocol/security and SFTP operations; `RemoteFileSystemTests` the shared contract; `TreeTests` navigation/moves; `WorkspaceTests` tabs/bookmarks; `RemoteEditTests` snapshots/automatic editing; `FTPTests` profiles/listing/gates; `FTPTransferTests` transfers/recovery/queue behavior; `FTPFileOperationsTests` recursive operations, link safety, permissions, and panel/drop routing; `FTPSTests` TLS modes, trust failures, protected data, resume, and queue integration. [`Tests/Fixtures/`](Tests/Fixtures/) holds the real FTP/FTPS test-server setup, ephemeral PKI generator, and a test-only SFTP reordering/short-read fixture.
 
 [`Resources/`](Resources/) holds icons/screenshots. [`docs/index.html`](docs/index.html) and [the Pages workflow](.github/workflows/pages.yml) are the separate static landing page. `.build/` and `build/` contain generated artifacts and are ignored by Git. Consult the validation report for the known local Xcode plugin issue and runtime coverage limits.

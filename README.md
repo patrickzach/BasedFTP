@@ -20,12 +20,24 @@ BasedFTP defaults to English, including on Macs configured in German. App menus,
 
 Requirements: Xcode with the macOS SDK and Swift 6 or later. The build script produces a universal app for Apple Silicon (`arm64`) and Intel (`x86_64`). Both variants have compiled successfully; the app has not yet been tested on Intel hardware.
 
+- Run `bash Scripts/setup-local-signing.sh` once to create a reusable **BasedFTP Local Development** signing identity in your login Keychain. macOS may request permission for this setup. It trusts that certificate for code signing only, never for TLS. Keep this identity across builds.
 - Open `BasedFTP.xcodeproj`, select the **BasedFTP** scheme and **My Mac** destination, then run.
-- Alternatively, run `bash Scripts/build-app.sh`. This creates `build/BasedFTP.app` as a universal bundle (`arm64` + `x86_64`) with a local ad hoc signature. Both architectures require macOS 14 or later. Launch the app in Finder afterward.
+- Alternatively, run `bash Scripts/build-app.sh`. This creates `build/BasedFTP.app` as a universal bundle (`arm64` + `x86_64`) with your reusable local certificate signature. Both architectures require macOS 14 or later. Launch the app in Finder afterward.
+- `bash Scripts/keychain-integration-test.sh` checks two different signed app builds against a fixed helper and synthetic Keychain entries, with authorization dialogs disabled; mismatched caller signatures/identifiers must fail. It requires the signing identity above and an unlocked login Keychain.
 - `bash Scripts/test.sh` runs unit tests and local SFTP subsystem tests.
 - `bash Scripts/integration-test.sh` additionally starts a temporary SSH server **bound only to 127.0.0.1**, using a random port and dedicated keys. It does not change system or user SSH settings. Requirements: `/usr/sbin/sshd`, `/usr/libexec/sftp-server`, Python 3, and permission to access the loopback network. Test files and the agent are removed afterward.
 
 Regenerate the project without additional tools using `python3 Scripts/generate-project.py`. The Swift package and Xcode project use the same source files. The build script also provides an alternative if the local Xcode IDE installation is broken.
+
+## Keychain access and local updates
+
+Saved passwords and passphrases remain in macOS Keychain. App bundles use a small signed `BasedFTPCredentials` helper for all credential reads, updates, and deletion. It checks the calling app's identifier **and signing certificate**; the app also verifies the helper's identifier and certificate. Requests and responses use private pipes, with no secrets in process arguments, environment variables, or temporary files.
+
+Locally signed programs can receive a new Keychain partition identity when their executable changes, even with the same self-signed certificate. The build therefore preserves the helper executable under `~/Library/Application Support/BasedFTP/Signing/Helpers/` and copies those same signed bytes into new app bundles. The main app can change without changing the credential reader. Keep this cache and signing identity. Changing helper sources/build settings, deleting the cache, rotating the certificate, or moving to a differently signed distribution can require fresh approval.
+
+**One-time transition:** existing credentials still belong to earlier builds. When macOS asks for the new helper's access, select **Always Allow** for the relevant entry. This may be needed separately for each saved password/passphrase. Entries are updated in place so password changes retain access grants; no existing credentials are automatically deleted or their permissions widened to all applications. Successful reads are serialized and cached in the app's memory until replacement, deletion, or app exit. SSH ASKPASS processes remain short-lived but use the same stable helper.
+
+Set `BASEDFTP_SIGNING_IDENTITY` to an exact certificate name or SHA-1 to use another signing identity; use the matching identity in Xcode too. Missing identities fail the build rather than silently switching to ad hoc signing. `BASEDFTP_SIGNING_IDENTITY=- bash Scripts/build-app.sh` explicitly creates an ad hoc preview **without saved-credential support**. Direct SwiftPM command-line/test executables use Keychain APIs directly and do not provide the bundle's stable helper behavior. Self-signed local builds are not notarized distribution builds; never commit or share the private signing key.
 
 ## First SFTP connection
 
