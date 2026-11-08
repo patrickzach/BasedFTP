@@ -17,7 +17,7 @@ flowchart LR
     F --> P[FTPClient: curl listings / libcurl transfers]
 ```
 
-The diagram shows responsibility and session creation. File operations run through `RemoteFileSystem`; backends do not depend on views. A tab owns its two panels, not a permanent network connection. Remote operations generally open their own session/request and explicitly close it.
+The diagram shows responsibility and session creation. File operations run through `RemoteFileSystem`; backends do not depend on views. App commands use `focusedSceneObject` / `FocusedObject` to observe the active workspace, so published tab changes immediately update shortcut availability. A tab owns its two panels, not a permanent network connection. Remote operations generally open their own session/request and explicitly close it.
 
 ## Source file map
 

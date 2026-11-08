@@ -187,8 +187,8 @@ struct RootView: View {
         }
         .sheet(item: $editing) { profile in ProfileEditor(profile: profile, store: profiles) { profile, remember in if remember { connect(profile) } else { workspace.connect(profile) } } }
         .alert("Could not save profiles", isPresented: Binding(get: { profiles.persistenceError != nil }, set: { if !$0 { profiles.persistenceError = nil } })) { Button("OK") { profiles.persistenceError = nil } } message: { Text(profiles.persistenceError ?? "") }
-        .focusedSceneValue(\.workspace, workspace)
-        .focusedSceneValue(\.profiles, profiles)
+        .focusedSceneObject(workspace)
+        .focusedSceneObject(profiles)
     }
     private func connectBookmark(_ profile: ServerProfile) {
         guard bookmarkGate.shouldOpen(profile.id, at: ProcessInfo.processInfo.systemUptime, doubleClickInterval: NSEvent.doubleClickInterval) else { return }
@@ -197,15 +197,11 @@ struct RootView: View {
     private func connect(_ profile: ServerProfile) { var p = profile; p.lastUsed = Date(); profiles.save(p); workspace.connect(p) }
 }
 
-private struct ProfileStoreKey: FocusedValueKey { typealias Value = ProfileStore }
-extension FocusedValues { var profiles: ProfileStore? { get { self[ProfileStoreKey.self] } set { self[ProfileStoreKey.self] = newValue } } }
-
-private struct WorkspaceKey: FocusedValueKey { typealias Value = Workspace }
-extension FocusedValues { var workspace: Workspace? { get { self[WorkspaceKey.self] } set { self[WorkspaceKey.self] = newValue } } }
-
 struct AppCommands: Commands {
-    @FocusedValue(\.workspace) var workspace
-    @FocusedValue(\.profiles) var profiles
+    // Observe published tab changes so shortcut enablement updates immediately,
+    // even before macOS opens/validates the File menu for the first time.
+    @FocusedObject private var workspace: Workspace?
+    @FocusedObject private var profiles: ProfileStore?
     var body: some Commands {
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") { workspace?.closeSelectedTab() }

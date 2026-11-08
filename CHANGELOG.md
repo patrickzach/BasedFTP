@@ -4,6 +4,10 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored Command-W immediately after opening a tab, without first opening the File menu. App commands now observe the active scene's workspace/profile objects rather than unobserved focused values.
+
 ### Added
 
 - Compact developer guide covering source files, key functions, common execution paths, extension points, and build/test tooling.
