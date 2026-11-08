@@ -2,7 +2,7 @@
 
 **Your server files. Right at home on your Mac.**
 
-BasedFTP is a free, open-source SFTP client for macOS, with FTP file transfers too. Browse local and remote files side by side, drag and drop to transfer, and edit server files in your favorite editor—with automatic uploads when you save. Native Mac feel. No accounts, ads, or telemetry.
+BasedFTP is a free, open-source SFTP client for macOS, with FTP and FTPS support too. Browse local and remote files side by side, drag and drop to transfer, and edit server files in your favorite editor—with automatic uploads when you save. Native Mac feel. No accounts, ads, or telemetry.
 
 **[Download for Mac](https://github.com/patrickzach/BasedFTP/releases)** · [Visit the website](https://patrickzach.github.io/BasedFTP/)
 
@@ -41,7 +41,7 @@ For ProxyJump/ProxyCommand, verify host keys once using the standard OpenSSH cli
 
 Choose **FTP (Unencrypted)** in the server dialog. Enter a hostname or IPv4 address, username, password, optional port (default **21**), and initial directory (default **.**, the login directory). Use `anonymous` explicitly for anonymous access. **Test Connection** verifies login and a passive directory listing. FTP passwords have a separate Keychain entry from SFTP passwords; changing a profile's protocol does not reuse its SSH password.
 
-You can browse directories, expand the folder tree, navigate with breadcrumbs/back/forward, sort, filter, and show hidden files. FTP sends credentials, listings, and file contents without encryption; use SFTP for secure connections. **FTPS is not implemented yet.**
+You can browse directories, expand the folder tree, navigate with breadcrumbs/back/forward, sort, filter, and show hidden files. FTP sends credentials, listings, and file contents without encryption; use SFTP or FTPS for secure connections.
 
 FTP uploads/downloads **files and recursive folder trees** through the shared queue, including parallel jobs, byte/file progress, speed/ETA, pause, cancellation, retry, and explicit Resume. Skip, Rename, and Overwrite conflicts work in both directions. Empty folders/files are included; recognized links and special files are skipped with warnings. Buttons, context menus, and the existing drag/drop routes support folder transfers as well as file transfers.
 
@@ -69,6 +69,29 @@ bash Scripts/ftp-integration-test.sh
 
 The script starts two isolated pyftpdlib servers bound only to `127.0.0.1`, using temporary directories and synthetic credentials, then cleans them up. To run the entire suite with both FTP and SSH servers available, use `bash Scripts/ftp-integration-test.sh bash Scripts/integration-test.sh`. `FTP_TEST_PYTHON` can select another Python installation with pyftpdlib installed. Without these servers, the network FTP tests are explicitly skipped.
 
+## FTPS (FTP over TLS, step 5)
+
+Choose **FTPS (Explicit TLS)** for the usual FTP-to-TLS upgrade, normally on port **21**. **FTPS (Implicit TLS)** starts TLS immediately and defaults to port **990**. Custom ports work in either mode. FTPS is separate from SFTP, which uses SSH.
+
+Both modes require **TLS 1.2 or newer for control and data connections**, including listings, transfers, and file operations. The app verifies the server certificate chain, validity, and hostname. A server refusing TLS or protected data channels causes failure; there is no automatic switch to plain FTP, trust-all checkbox, or certificate-verification bypass. The status bar identifies explicit/implicit FTPS.
+
+Leave **CA Certificate (optional PEM)** blank to use the platform/system-libcurl trust defaults. For a private CA, select a readable PEM CA bundle for that profile. The setting affects that profile's requests, not the macOS trust store. A custom CA does not disable hostname or expiration checks. The path is saved with the profile; the certificate is not uploaded. FTPS passwords use a separate Keychain entry from plain FTP and SSH, shared between the two FTPS modes of the same profile. Switching protocol clears unsaved credential fields.
+
+FTPS shares FTP's recursive transfers, queue, conflicts, file operations, Unix LIST metadata requirements, and staging/rename limitations described above. TLS does not add atomic replacement semantics: remote editor auto-upload remains SFTP-only. Authentication is username/password; FTPS client-certificate authentication is not implemented.
+
+Run the isolated TLS tests with test-only dependencies:
+
+```bash
+.build/ftp-test-venv/bin/python -m pip install pyOpenSSL==26.4.0
+bash Scripts/ftps-integration-test.sh
+```
+
+This uses the Python environment and pyftpdlib installation from the FTP section. It generates an ephemeral private CA and local server certificates, binds only to loopback, checks trusted and invalid certificates on control/data channels, and cleans up without changing Keychain or system trust. To run all protocol tests together:
+
+```bash
+bash Scripts/ftps-integration-test.sh bash Scripts/ftp-integration-test.sh bash Scripts/integration-test.sh
+```
+
 ## Usage
 
 - Open saved servers and recent connections with a single or double click. A double click creates exactly one tab. The entire bookmark row is clickable.
@@ -89,9 +112,10 @@ The script starts two isolated pyftpdlib servers bound only to `127.0.0.1`, usin
 ## Architecture and technical decisions
 
 - `Models.swift`: profiles, file metadata, navigation, and conflict strategies.
-- `RemoteFileSystem.swift`: protocol-independent remote file operations and the central connection factory. Browsing, transfers, connection testing, and remote editing use this interface. SFTP is fully implemented; FTP supports browsing, recursive transfers, and file operations, with FTPS and remote editing deferred. Missing entries are distinguished from permission and connection failures inside each backend.
+- `RemoteFileSystem.swift`: protocol-independent remote file operations and the central connection factory. Browsing, transfers, connection testing, and remote editing use this interface. SFTP is fully implemented; FTP supports browsing, recursive transfers, and file operations, with FTP/FTPS remote editing still deferred. Missing entries are distinguished from permission and connection failures inside each backend.
 - `OperationControl.swift`: shared operation lifetime, cancellation, pause, and process timeout handling. The existing process-based implementation is retained.
-- `FTP.swift`: curl-backed passive FTP browsing, UTF-8 MLSD parsing, safe URL/configuration construction, staged file transfers, and file/folder operations.
+- `FTP.swift`: shared FTP/FTPS backend with curl-backed passive browsing, UTF-8 MLSD parsing, safe URL/configuration construction, staged file transfers, and file/folder operations.
+- `FTPTLS.swift`: mandatory listing TLS settings and consistent certificate/handshake diagnostics for CLI/native requests. Native TLS options and verification-result checks are in `FTPCurl.swift`.
 - `FTPUnixListing.swift`: conservative Unix LIST metadata verification, link/type detection, and permission parsing alongside MLSD.
 - `FTPCurl.swift`, `Sources/CCurl/`: typed system-libcurl integration, bounded binary file I/O, byte progress, pause/cancel callbacks, staging commits, and reusable FTP command connections.
 - `SFTP.swift`: binary SFTP v3 framing and file commands over stdin/stdout of `/usr/bin/ssh -s … sftp`. No shell command chains, `ls` parsing, or custom SSH cryptography.
@@ -120,11 +144,14 @@ References consulted during implementation:
 - [RFC 3659 MLSD directory listings](https://www.rfc-editor.org/rfc/rfc3659.html)
 - [libcurl transfer progress callbacks](https://curl.se/libcurl/c/CURLOPT_XFERINFOFUNCTION.html)
 - [libcurl FTP upload resumption](https://curl.se/libcurl/c/CURLOPT_RESUME_FROM_LARGE.html)
+- [libcurl mandatory TLS for all FTP channels](https://curl.se/libcurl/c/CURLOPT_USE_SSL.html)
+- [libcurl certificate and hostname verification](https://curl.se/libcurl/c/CURLOPT_SSL_VERIFYPEER.html)
+- [curl explicit and implicit FTPS](https://curl.se/docs/faq.html#FTPS_does_not_work)
 
 ## Security and limitations
 
 - `StrictHostKeyChecking=yes`, no agent forwarding, LocalCommand execution, or port forwarding. The app enforces `~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`; alternative KnownHosts paths from SSH configuration are deliberately ignored. Automatic DNS-based host-key acceptance and automatic key updates are disabled.
-- Passwords and passphrases are stored only in macOS Keychain. For SFTP, a dedicated, short-lived ASKPASS subprocess supplies them to OpenSSH through a pipe. FTP uses a separate password entry and supplies credentials to curl over stdin. Secrets are absent from process arguments, environment variables, profile JSON, and logs. Private keys remain at their existing locations.
+- Passwords and passphrases are stored only in macOS Keychain. FTP and FTPS use distinct credential entries. For SFTP, a dedicated, short-lived ASKPASS subprocess supplies them to OpenSSH through a pipe. FTP uses a separate password entry and supplies credentials to curl over stdin. Secrets are absent from process arguments, environment variables, profile JSON, and logs. Private keys remain at their existing locations.
 - Profile names and filenames are never executed as shell code. Hosts and ports are validated, and protocol packets have size limits. SFTP supports UTF-8 filenames, including spaces, quotes, Unicode, and newlines. FTP rejects control characters, including newlines. Non-UTF-8 filenames are explicitly rejected.
 - New SFTP transfers first write a uniquely named `.partial` file in the destination folder. It is committed only after successful completion. OpenSSH servers use `posix-rename@openssh.com`; overwriting after a completed upload is not atomic on servers without this extension. Hidden staging files may remain after failures and require manual cleanup.
 - **Resume** writes directly into the existing destination file. Use it only with an identical prefix: SFTP v3 cannot guarantee a content comparison of existing partial data. A larger destination file causes failure. Retry retains the original strategy. Resume on a canceled job uses its saved staging paths; after restarting the app, leftover staging files must be identified/renamed manually. First ensure the source is unchanged.

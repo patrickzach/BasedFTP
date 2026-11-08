@@ -43,8 +43,9 @@ struct FilePane: View {
                 }.buttonStyle(.plain).font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
             }
             HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Filter files", text: $pane.filter).textFieldStyle(.plain) }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
-            if pane.profile?.transport == .ftp {
-                Text("FTP · Unencrypted · File transfers").font(.caption).foregroundStyle(.orange)
+            if let transport = pane.profile?.transport, transport != .sftp {
+                Label(transport.connectionLabel, systemImage: transport.usesTLS ? "lock.shield" : "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(transport.usesTLS ? Color.secondary : Color.orange)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.bottom, 8)
             }
             Divider()
@@ -220,7 +221,7 @@ struct StatusBar: View {
     var body: some View {
         HStack {
             Circle().fill(remote.busy ? .orange : remote.error == nil && !remote.entries.isEmpty ? .green : .secondary).frame(width: 6, height: 6)
-            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · \(tab.profile.transport == .sftp ? "SSH / SFTP" : "FTP · Unencrypted · File transfers")" : "Check Connection")
+            Text(remote.busy ? "Connecting / loading directory…" : remote.error == nil ? "\(tab.profile.host) · \(tab.profile.transport.connectionLabel)" : "Check Connection")
             Spacer(); Text("\(queue.jobs.filter { !$0.terminal }.count) transfers pending")
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 7).background(.bar)
     }

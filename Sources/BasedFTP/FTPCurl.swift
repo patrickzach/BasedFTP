@@ -82,6 +82,7 @@ enum FTPCurl {
                         file: FileHandle? = nil, upload: Bool = false, offset: UInt64 = 0, size: UInt64 = 0,
                         commands: [String] = [], connection: FTPCurlConnection? = nil, progress: (UInt64) -> Void = { _ in }) throws {
         try control.checkpoint(); try profile.validate()
+        guard profile.transport != .sftp else { throw FTPError.message("The FTP transport cannot be used with an SSH profile.") }
         let handle: UnsafeMutableRawPointer
         if let connection {
             guard let live = connection.handle else { throw FTPError.message("The FTP command connection is closed.") }
@@ -97,7 +98,15 @@ enum FTPCurl {
         try check(bftp_string(handle, CURLOPT_URL, url))
         try check(bftp_string(handle, CURLOPT_USERNAME, profile.user))
         try check(bftp_string(handle, CURLOPT_PASSWORD, password))
-        try check(bftp_string(handle, CURLOPT_PROTOCOLS_STR, "ftp"))
+        try check(bftp_string(handle, CURLOPT_PROTOCOLS_STR, profile.transport.urlScheme))
+        if profile.transport.usesTLS {
+            try check(bftp_long(handle, CURLOPT_USE_SSL, Int(CURLUSESSL_ALL.rawValue)))
+            try check(bftp_long(handle, CURLOPT_SSL_VERIFYPEER, 1))
+            try check(bftp_long(handle, CURLOPT_SSL_VERIFYHOST, 2))
+            try check(bftp_long(handle, CURLOPT_SSLVERSION, Int(CURL_SSLVERSION_TLSv1_2)))
+            try check(bftp_long(handle, CURLOPT_FTPSSLAUTH, Int(CURLFTPAUTH_TLS.rawValue)))
+            if !profile.caCertificatePath.isEmpty { try check(bftp_string(handle, CURLOPT_CAINFO, profile.resolvedCAPath)) }
+        }
         try check(bftp_string(handle, CURLOPT_PROXY, ""))
         try check(bftp_string(handle, CURLOPT_NOPROXY, "*"))
         try check(bftp_long(handle, CURLOPT_NETRC, Int(CURL_NETRC_IGNORED.rawValue)))
@@ -139,7 +148,15 @@ enum FTPCurl {
             let result = curl_easy_perform(handle)
             if let error = context.error { throw error }
             try control.checkpoint()
+            if profile.transport.usesTLS {
+                var verification: Int = 0
+                try check(bftp_verify_result(handle, &verification))
+                // A failed data-channel handshake may be surfaced as a generic FTP
+                // response error; preserve the actual TLS verification diagnosis.
+                if verification != 0 { throw FTPTLSError.certificate }
+            }
             guard result == CURLE_OK else {
+                if profile.transport.usesTLS, let error = FTPTLS.failure(code: Int(result.rawValue)) { throw error }
                 // Server replies and error buffers may echo credentials; display only our own diagnostics.
                 let message: String
                 switch result {

@@ -20,7 +20,7 @@ enum CredentialStore {
         return String(data: data, encoding: .utf8)
     }
     static func delete(profile: UUID) {
-        for purpose in ["password", "passphrase", "ftp-password"] { try? save("", profile: profile, purpose: purpose) }
+        for purpose in ["password", "passphrase", "ftp-password", "ftps-password"] { try? save("", profile: profile, purpose: purpose) }
     }
 }
 

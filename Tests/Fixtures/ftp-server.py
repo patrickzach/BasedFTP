@@ -27,8 +27,47 @@ class TestDataHandler(ThrottledDTPHandler):
     read_limit = 512 * 1024
     write_limit = 512 * 1024
 
-class Handler(FTPHandler):
-    dtp_handler = TestDataHandler
+secure = mode.startswith("ftps")
+HandlerBase = FTPHandler
+DataHandler = TestDataHandler
+if secure:
+    from OpenSSL import SSL
+    from pyftpdlib.handlers import TLS_FTPHandler, TLS_DTPHandler
+    HandlerBase = TLS_FTPHandler
+    class TLSDataHandler(TLS_DTPHandler):
+        def __init__(self, sock, cmd_channel):
+            original = cmd_channel.ssl_context
+            if mode == "ftps-bad-data":
+                cmd_channel.ssl_context = cmd_channel.bad_data_context
+            try:
+                super().__init__(sock, cmd_channel)
+            finally:
+                cmd_channel.ssl_context = original
+        def handle_ssl_established(self):
+            super().handle_ssl_established()
+            with (root / ("security-" + mode)).open("a") as log:
+                log.write("data " + self.socket.get_protocol_version_name() + "\n")
+    DataHandler = TLSDataHandler
+
+class Handler(HandlerBase):
+    dtp_handler = DataHandler
+    def handle(self):
+        if mode == "ftps-implicit":
+            self.on_connect()
+            self.secure_connection(self.ssl_context)
+        else:
+            super().handle()
+    def handle_ssl_established(self):
+        super().handle_ssl_established()
+        with (root / ("security-" + mode)).open("a") as log:
+            log.write("control " + self.socket.get_protocol_version_name() + "\n")
+        if mode == "ftps-implicit":
+            self.respond("220 Implicit FTPS test server ready")
+    def ftp_PROT(self, line):
+        if mode == "ftps-no-data":
+            self.respond("534 Protected data channels refused for test")
+        else:
+            super().ftp_PROT(line)
     def on_file_received(self, file):
         self.record_finished(file)
     def on_incomplete_file_received(self, file):
@@ -52,10 +91,15 @@ class Handler(FTPHandler):
     def on_connect(self):
         Handler.next_connection_id += 1
         self.connection_id = Handler.next_connection_id
+        if mode == "ftps-rotate" and self.connection_id > 1:
+            self.ssl_context = self.bad_data_context
     def on_login(self, username):
         self.fs.cwd = "/home"
+        if secure:
+            with (root / ("security-" + mode)).open("a") as log:
+                log.write("login-secure\n" if self._ssl_established else "login-clear\n")
     def ftp_EPSV(self, line):
-        if mode == "pasv":
+        if mode in ("pasv", "ftps-pasv"):
             self.respond("502 EPSV disabled for PASV fallback test")
         else:
             super().ftp_EPSV(line)
@@ -89,14 +133,33 @@ class Handler(FTPHandler):
         # Record command names only, never credentials or request arguments.
         with (root / ("commands-" + mode)).open("a") as file:
             file.write(cmd + "\n")
+        if secure:
+            with (root / ("replies-" + mode)).open("a") as file:
+                file.write(cmd + " " + str(respcode) + "\n")
         if cmd in ("MKD", "RNFR", "RNTO", "DELE", "RMD"):
             with (root / ("command-connections-" + mode)).open("a") as file:
                 file.write(str(self.connection_id) + " " + cmd + "\n")
 
 Handler.authorizer = authorizer
 # A bogus advertised PASV address proves clients use the control peer instead.
-if mode == "pasv":
+if mode in ("pasv", "ftps-pasv"):
     Handler.masquerade_address = "192.0.2.123"
+if secure:
+    variant = "expired" if mode == "ftps-expired" else "valid"
+    def context_for(variant):
+        context = SSL.Context(SSL.TLS_SERVER_METHOD)
+        context.set_min_proto_version(SSL.TLS1_2_VERSION)
+        context.use_certificate_chain_file(str(root / (variant + ".pem")))
+        context.use_privatekey_file(str(root / (variant + ".key")))
+        return context
+    Handler.ssl_context = context_for(variant)
+    Handler.bad_data_context = context_for("bad-data")
+    Handler.tls_control_required = True
+    Handler.tls_data_required = True
+    if mode == "ftps-legacy":
+        Handler.ssl_context.set_min_proto_version(SSL.TLS1_1_VERSION)
+        Handler.ssl_context.set_max_proto_version(SSL.TLS1_1_VERSION)
+        Handler.ssl_context.set_cipher_list(b"DEFAULT:@SECLEVEL=0")
 server = FTPServer(("127.0.0.1", 0), Handler)
 (root / ("port-" + mode)).write_text(str(server.socket.getsockname()[1]))
 server.serve_forever(timeout=0.1)

@@ -1,13 +1,24 @@
 import Foundation
 
 enum ServerProtocol: String, Codable, CaseIterable, Identifiable, Sendable {
-    case sftp, ftp
+    case sftp, ftp, ftps, ftpsImplicit
     var id: String { rawValue }
-    var title: String { self == .sftp ? "SFTP (SSH)" : "FTP (Unencrypted)" }
+    var title: String {
+        switch self {
+        case .sftp: return "SFTP (SSH)"
+        case .ftp: return "FTP (Unencrypted)"
+        case .ftps: return "FTPS (Explicit TLS)"
+        case .ftpsImplicit: return "FTPS (Implicit TLS)"
+        }
+    }
+    var usesTLS: Bool { self == .ftps || self == .ftpsImplicit }
+    var defaultPort: String { self == .sftp ? "22" : self == .ftpsImplicit ? "990" : "21" }
+    var urlScheme: String { self == .ftpsImplicit ? "ftps" : "ftp" }
+    var connectionLabel: String { self == .sftp ? "SSH / SFTP" : self == .ftp ? "FTP · Unencrypted" : self == .ftps ? "FTPS · Explicit TLS" : "FTPS · Implicit TLS" }
     var supportsTransfers: Bool { true }
     var supportsRemoteEditing: Bool { self == .sftp }
     var supportsMutations: Bool { true }
-    static let ftpLimitationsNotice = "FTP remote editing is not implemented yet. Permission changes require server support for SITE CHMOD."
+    static let ftpLimitationsNotice = "FTP/FTPS remote editing is not implemented yet. Permission changes require server support for SITE CHMOD."
 }
 
 struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
@@ -19,12 +30,14 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
     var port = ""
     var keyPath = ""
     var initialPath = "."
+    var caCertificatePath = ""
     var favorite = false
     var lastUsed: Date?
     var title: String { name.isEmpty ? host : name }
-    var passwordPurpose: String { transport == .ftp ? "ftp-password" : "password" }
+    var passwordPurpose: String { transport == .sftp ? "password" : transport.usesTLS ? "ftps-password" : "ftp-password" }
+    var resolvedCAPath: String { (caCertificatePath as NSString).expandingTildeInPath }
     init() {}
-    private enum CodingKeys: String, CodingKey { case id, transport, name, host, user, port, keyPath, initialPath, favorite, lastUsed }
+    private enum CodingKeys: String, CodingKey { case id, transport, name, host, user, port, keyPath, initialPath, favorite, lastUsed, caCertificatePath }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -36,6 +49,7 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
         port = try c.decode(String.self, forKey: .port)
         keyPath = try c.decode(String.self, forKey: .keyPath)
         initialPath = try c.decode(String.self, forKey: .initialPath)
+        caCertificatePath = try c.decodeIfPresent(String.self, forKey: .caCertificatePath) ?? ""
         favorite = try c.decode(Bool.self, forKey: .favorite)
         lastUsed = try c.decodeIfPresent(Date.self, forKey: .lastUsed)
     }
@@ -56,6 +70,12 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
                 throw FTPError.message("Enter an FTP username without colons or control characters. Use anonymous for anonymous access.")
             }
             try FTPPaths.validate(initialPath)
+            if transport.usesTLS && !caCertificatePath.isEmpty {
+                guard resolvedCAPath.hasPrefix("/"), !resolvedCAPath.contains("\0"), FileManager.default.isReadableFile(atPath: resolvedCAPath),
+                      (try? URL(fileURLWithPath: resolvedCAPath).resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                    throw FTPError.message("Choose a readable CA certificate bundle using an absolute path. Leave it blank to use the system trust store.")
+                }
+            }
         }
     }
     var sshArguments: [String] {

@@ -26,7 +26,7 @@ enum FTPPaths {
         if directory.hasPrefix("/") {
             encoded = "%2F" + (String(path.dropFirst(3)).addingPercentEncoding(withAllowedCharacters: allowed) ?? "")
         } else { encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? "" }
-        return "ftp://\(profile.host):\(profile.port.isEmpty ? "21" : profile.port)/\(encoded)" + (encoded.isEmpty || encoded.hasSuffix("/") ? "" : "/")
+        return "\(profile.transport.urlScheme)://\(profile.host):\(profile.port.isEmpty ? profile.transport.defaultPort : profile.port)/\(encoded)" + (encoded.isEmpty || encoded.hasSuffix("/") ? "" : "/")
     }
     static func fileURL(profile: ServerProfile, path: String) throws -> String {
         try validate(path)
@@ -123,7 +123,7 @@ final class FTPClient: RemoteFileSystem {
     private var cached: (path: String, entries: [FileEntry])?
     init(profile: ServerProfile, control: OperationControl = OperationControl(), password: String? = nil) throws {
         try profile.validate()
-        guard profile.transport == .ftp else { throw FTPError.message("An FTP profile is required.") }
+        guard profile.transport != .sftp else { throw FTPError.message("An FTP or FTPS profile is required.") }
         self.profile = profile; self.control = control
         self.password = password ?? CredentialStore.read(account: profile.id.uuidString + "." + profile.passwordPurpose) ?? ""
         guard !(self.password ?? "").unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
@@ -144,13 +144,15 @@ final class FTPClient: RemoteFileSystem {
         let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
         let diagnosticsBuffer = FTPDiagnostics(), diagnosticsGroup = DispatchGroup()
         let marker = "BASEDFTP-" + UUID().uuidString + ":"
+        let verifyMarker = "\n" + marker + "verify:"
         process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
         // -q must be first: do not load ~/.curlrc. Credentials only travel over stdin.
         process.arguments = ["-q", "--config", "-", "--silent", "--show-error", "--globoff", "--path-as-is",
-                             "--proto", "=ftp", "--proxy", "", "--noproxy", "*", "--ftp-pasv", "--ftp-skip-pasv-ip",
+                             "--proto", "=" + profile.transport.urlScheme, "--proxy", "", "--noproxy", "*", "--ftp-pasv", "--ftp-skip-pasv-ip",
                              "--ftp-method", "singlecwd", "--connect-timeout", "15", "--max-time", "60",
                              "--quote", "*OPTS UTF8 ON", "--request", command, "--url", url,
-                             "--write-out", "%{stderr}\n" + marker + "%{ftp_entry_path}"]
+                             "--write-out", "%{stderr}\n" + marker + "%{ftp_entry_path}" + verifyMarker + "%{ssl_verify_result}"]
+        process.arguments = (process.arguments ?? []) + FTPTLS.listingArguments(profile: profile)
         process.standardInput = input; process.standardOutput = output; process.standardError = errors
         // Do not inherit proxy settings, curl configuration variables, or application secrets.
         process.environment = ["PATH": "/usr/bin:/bin", "LC_ALL": "C"]
@@ -178,8 +180,12 @@ final class FTPClient: RemoteFileSystem {
         process.waitUntilExit(); try control.touch()
         diagnosticsGroup.wait()
         let diagnostics = diagnosticsBuffer.text
-        let markerRange = diagnostics.range(of: "\n" + marker, options: .backwards)
+        let verifyRange = diagnostics.range(of: verifyMarker, options: .backwards)
+        let homeDiagnostics = verifyRange.map { String(diagnostics[..<$0.lowerBound]) } ?? diagnostics
+        let markerRange = homeDiagnostics.range(of: "\n" + marker, options: .backwards)
+        if profile.transport.usesTLS, let verifyRange, let verification = Int(diagnostics[verifyRange.upperBound...]), verification != 0 { throw FTPTLSError.certificate }
         if process.terminationStatus != 0 {
+            if profile.transport.usesTLS, let error = FTPTLS.failure(code: Int(process.terminationStatus)) { throw error }
             switch process.terminationStatus {
             case 67: throw FTPError.message("FTP login failed. Check the username and password.")
             case 6: throw FTPError.message("Could not resolve the FTP hostname.")
@@ -193,7 +199,7 @@ final class FTPClient: RemoteFileSystem {
             }
         }
         guard let markerRange else { throw FTPError.message("The FTP server did not return a login directory.") }
-        let home = String(diagnostics[markerRange.upperBound...])
+        let home = String(homeDiagnostics[markerRange.upperBound...])
         let path = try FTPPaths.resolved(target, home: home)
         loginHome = home
         return (path, data)
@@ -207,7 +213,7 @@ final class FTPClient: RemoteFileSystem {
             let verified = try FTPUnixListing.merge(unix.data, entries: entries, directory: result.path, requireConsistent: requireLinkInfo)
             return (result.path, verified)
         } catch {
-            if error is CancellationError { throw error }
+            if error is CancellationError || error is FTPTLSError { throw error }
             if requireLinkInfo, error is FTPUnixListing.Failure, attempt < 2 {
                 // Only repeat read-only metadata requests, never mutations.
                 return try directory(target, requireLinkInfo: true, attempt: attempt + 1)

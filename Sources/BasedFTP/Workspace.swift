@@ -168,7 +168,7 @@ struct RootView: View {
                 } else {
                     ContentUnavailableView {
                         Label("Your files. Everywhere.", systemImage: "externaldrive.connected.to.line.below")
-                    } description: { Text("Choose a server or add an SFTP or FTP connection.") } actions: {
+                    } description: { Text("Choose a server or add an SFTP, FTP, or FTPS connection.") } actions: {
                         Button("Add Server…") { editing = ServerProfile() }.buttonStyle(.borderedProminent)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     RemoteEditsView(manager: workspace.edits)

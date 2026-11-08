@@ -59,7 +59,7 @@ enum RemoteFileSystems {
     static func connect(profile: ServerProfile, control: OperationControl = OperationControl(), knownHosts: URL? = nil) throws -> any RemoteFileSystem {
         switch profile.transport {
         case .sftp: return try SFTPClient(profile: profile, control: control, knownHosts: knownHosts)
-        case .ftp: return try FTPClient(profile: profile, control: control)
+        case .ftp, .ftps, .ftpsImplicit: return try FTPClient(profile: profile, control: control)
         }
     }
 }

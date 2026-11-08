@@ -26,7 +26,7 @@ struct ProfileEditor: View {
                 TextField("Name", text: $profile.name)
                 TextField(profile.transport == .sftp ? "Host / SSH Alias" : "Host", text: $profile.host)
                 TextField(profile.transport == .sftp ? "Username (blank: SSH configuration)" : "Username", text: $profile.user)
-                TextField(profile.transport == .sftp ? "Port (blank: SSH configuration)" : "Port (default: 21)", text: $profile.port)
+                TextField(profile.transport == .sftp ? "Port (blank: SSH configuration)" : "Port (default: \(profile.transport.defaultPort))", text: $profile.port)
                 TextField("Initial Directory", text: $profile.initialPath)
                 if profile.transport == .sftp {
                     HStack {
@@ -43,13 +43,26 @@ struct ProfileEditor: View {
                     SecureField("Key Passphrase", text: $passphrase).onChange(of: passphrase) { _, value in if !value.isEmpty { savePassphrase = true } }
                     Toggle("Replace passphrase in Keychain", isOn: $savePassphrase)
                 }
+                if profile.transport.usesTLS {
+                    HStack {
+                        TextField("CA Certificate (optional PEM)", text: $profile.caCertificatePath)
+                        Button("Choose…") {
+                            let panel = NSOpenPanel(); panel.canChooseDirectories = false
+                            if panel.runModal() == .OK { profile.caCertificatePath = panel.url?.path ?? "" }
+                        }
+                    }
+                }
                 Toggle("Favorite", isOn: $profile.favorite)
                 Toggle("Save server profile", isOn: $remember)
             }.textFieldStyle(.roundedBorder)
             if profile.transport == .sftp {
                 Text("SSH agent and ~/.ssh/config are used automatically. Credentials are stored in macOS Keychain. Empty fields only change stored credentials when the replace option is enabled.").font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("FTP sends your password and file contents without encryption. Use SFTP for secure connections. FTPS is not implemented yet.").font(.caption).foregroundStyle(.orange)
+                if profile.transport.usesTLS {
+                    Text("TLS 1.2 or newer is required for login and data. Certificates and hostnames are verified using system trust or the selected CA bundle. Verification failures stop the connection.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("FTP sends your password and file contents without encryption. Choose SFTP or FTPS for secure connections.").font(.caption).foregroundStyle(.orange)
+                }
                 Text(ServerProtocol.ftpLimitationsNotice + " Passwords are stored separately in macOS Keychain; leave the field empty to use a stored password.").font(.caption).foregroundStyle(.secondary)
             }
             if let result { Text(result).font(.caption).textSelection(.enabled).frame(maxHeight: 100).fixedSize(horizontal: false, vertical: true) }
@@ -80,7 +93,7 @@ struct ProfileEditor: View {
         Task {
             do {
                 let path = try await Task.detached { let c = try RemoteFileSystems.connect(profile: p); defer { c.close() }; let path = try c.realpath(p.initialPath); _ = try c.list(path); return path }.value
-                result = "\(p.transport == .sftp ? "SSH authentication and SFTP" : "FTP login and passive directory listing") succeeded. Directory: \(path)"
+                result = "\(p.transport == .sftp ? "SSH authentication and SFTP" : "\(p.transport.usesTLS ? "FTPS verified TLS" : "FTP") login and passive directory listing") succeeded. Directory: \(path)"
             } catch { result = error.localizedDescription }
             busy = false
         }

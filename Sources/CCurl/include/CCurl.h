@@ -11,4 +11,5 @@ static inline CURLcode bftp_read(CURL *c, curl_read_callback f) { return curl_ea
 static inline CURLcode bftp_seek(CURL *c, curl_seek_callback f) { return curl_easy_setopt(c, CURLOPT_SEEKFUNCTION, f); }
 static inline CURLcode bftp_progress(CURL *c, curl_xferinfo_callback f) { return curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, f); }
 static inline CURLcode bftp_quotes(CURL *c, struct curl_slist *v) { return curl_easy_setopt(c, CURLOPT_QUOTE, v); }
+static inline CURLcode bftp_verify_result(CURL *c, long *v) { return curl_easy_getinfo(c, CURLINFO_SSL_VERIFYRESULT, v); }
 #endif

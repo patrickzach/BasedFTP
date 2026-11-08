@@ -10,6 +10,11 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- Explicit FTPS (default port 21) and implicit FTPS (default port 990), with TLS 1.2+ required for both control and data channels and no plaintext fallback.
+- Certificate chain/hostname verification, optional per-profile PEM CA bundles without changing system trust, distinct FTPS Keychain passwords, and TLS mode/status UI.
+- Consistent certificate diagnostics, including failed data-channel verification masked by generic FTP response errors and certificate changes during supplemental LIST requests.
+- Isolated real FTPS integration tests covering explicit/implicit/PASV operation, private trust, unknown/wrong/expired certificates, hostname mismatch, refused data protection, invalid data certificates, TLS minimums, cancellation/resume, file operations, and parallel folder queues.
+
 - FTP folder/file creation, renaming, moving, recursive deletion with acknowledged progress, and manual SITE CHMOD on supporting servers.
 - Recursive FTP folder uploads/downloads, empty directories, existing drag/drop integration, and link/special-file skipping with warnings.
 - Conservative Unix LIST metadata verification alongside MLSD, including broken-link detection, permission display, root/self-move/link-ancestor protection, and explicit refusal when recursion cannot be verified safely.

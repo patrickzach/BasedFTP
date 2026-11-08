@@ -1,6 +1,6 @@
 # Developer guide
 
-A quick map of the codebase, reflecting FTP implementation step 4. Start with [README.md](README.md) for builds and usage; [VALIDATION.md](VALIDATION.md) records checks actually performed.
+A quick map of the codebase, reflecting FTPS implementation step 5. Start with [README.md](README.md) for builds and usage; [VALIDATION.md](VALIDATION.md) records checks actually performed.
 
 ## How the pieces fit
 
@@ -14,7 +14,7 @@ flowchart LR
     W --> F[RemoteFileSystems.connect]
     Q --> F
     F --> S[SFTPClient: OpenSSH subprocess]
-    F --> P[FTPClient: curl listings / libcurl transfers]
+    F --> P[FTPClient: FTP/FTPS listings and transfers]
 ```
 
 The diagram shows responsibility and session creation. File operations run through `RemoteFileSystem`; backends do not depend on views. App commands use `focusedSceneObject` / `FocusedObject` to observe the active workspace, so published tab changes immediately update shortcut availability. A tab owns its two panels, not a permanent network connection. Remote operations generally open their own session/request and explicitly close it.
@@ -34,9 +34,10 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 | [FileSystem.swift](Sources/BasedFTP/FileSystem.swift) | `LocalFiles` helpers and `PaneModel`: navigation, lazy folder loading, filtering/sorting, selection, and file operations. |
 | [RemoteFileSystem.swift](Sources/BasedFTP/RemoteFileSystem.swift) | Shared backend contract, transfer feature flags, deletion progress, convenience methods, and the SFTP/FTP connection factory. |
 | [SFTP.swift](Sources/BasedFTP/SFTP.swift) | Binary SFTP v3 packets, OpenSSH process/session handling, pipelined requests, file operations, and atomic editor uploads. SSH encryption/authentication belongs to OpenSSH. |
-| [FTP.swift](Sources/BasedFTP/FTP.swift) | FTP path/URL validation, MLSD parsing, curl-based directory requests, recursive transfers, file/folder operations, and staging-file commits. Unavailable operations throw explicit errors. |
+| [FTP.swift](Sources/BasedFTP/FTP.swift) | Shared FTP/FTPS path/URL validation, MLSD parsing, curl-based directory requests, recursive transfers, file/folder operations, and staging-file commits. Unavailable operations throw explicit errors. |
+| [FTPTLS.swift](Sources/BasedFTP/FTPTLS.swift) | Required listing TLS options, typed certificate/handshake failures, and common error-code mapping. Native TLS configuration lives in `FTPCurl.perform`. |
 | [FTPUnixListing.swift](Sources/BasedFTP/FTPUnixListing.swift) | Supplements MLSD with Unix LIST link/type/permission metadata; rejects ambiguous or inconsistent recursive traversal. |
-| [FTPCurl.swift](Sources/BasedFTP/FTPCurl.swift) | Direct system-libcurl requests and file/progress/seek callbacks. Handles binary I/O, cooperative pause/cancel, timeouts, safe callback lifetimes, and reusable command connections. |
+| [FTPCurl.swift](Sources/BasedFTP/FTPCurl.swift) | Direct system-libcurl requests and file/progress/seek callbacks. Handles binary I/O, cooperative pause/cancel, timeouts, safe callback lifetimes, reusable command connections, and mandatory TLS/certificate verification for FTPS. |
 | [OperationControl.swift](Sources/BasedFTP/OperationControl.swift) | Shared cancellation/pause state, subprocess attachment and inactivity checks, native callback checkpoints, and global cancellation on exit. |
 | [Transfers.swift](Sources/BasedFTP/Transfers.swift) | Queue scheduling, job state, conflict handling, recursion, staging, resume checkpoints, byte/file counters, warnings, and readable remaining time. |
 | [RemoteEdit.swift](Sources/BasedFTP/RemoteEdit.swift) | Working copies, stable SHA256 snapshots, change monitoring, serialized automatic uploads, retry/stop, and editing status views. Available for SFTP only. |
@@ -81,7 +82,8 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 - A fresh upload writes a staging file before commitment. SFTP editor uploads require atomic replacement. FTP uses RNFR/RNTO and never deletes the old destination as a fallback; FTP cannot promise atomic replacement or race-free no-replace semantics.
 - Resume assumes matching partial contents; it does not compare prefixes. Checkpoints and queue state are in memory. Recovery files may remain after failure/restart.
 - `ServerProtocol` controls UI availability; `RemoteTransferFeatures` tells the engine about directory/permission support. FTP now supports recursive transfers and file mutations; automatic FTP permission preservation remains off because SITE CHMOD is optional. Update both when implementing a capability, and keep backend checks as protection against direct calls.
-- Passwords/passphrases belong in Keychain, not profile JSON. FTP has a separate password entry. Preserve strict SSH host-key verification and keep credentials out of arguments, logs, and files.
+- FTPS requires TLS 1.2+ on both control/data channels, chain/hostname verification, and no plaintext fallback. A per-profile CA path configures local trust only. Both CLI and native requests check the TLS verification result; a certificate error during supplemental LIST must propagate rather than falling back to MLSD metadata.
+- Passwords/passphrases belong in Keychain, not profile JSON. FTP and FTPS have separate password entries from each other and SSH. Preserve strict SSH host-key verification and keep credentials out of arguments, logs, and files.
 
 ## Where to make a change
 
@@ -92,6 +94,7 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 | Navigation, filtering, stale listings | `PaneModel` in `FileSystem.swift` |
 | Queue behavior, conflicts, file counts, resume | `Transfers.swift` |
 | FTP file operations or server compatibility | `FTP.swift`, `FTPUnixListing.swift`, backend feature flags, `ServerProtocol`, and real-server tests |
+| FTPS modes, CA settings, or TLS errors | `Models.swift`, `FTPTLS.swift`, `FTPCurl.swift`, and `FTPSTests.swift`; keep listing and native transfer security policies aligned |
 | Editor monitoring or Open With | `RemoteEdit.swift` / `EditorApplications.swift` |
 | Authentication/profile storage | `Security.swift`, `ProfileEditor.swift`, protocol-specific backend |
 
@@ -105,8 +108,9 @@ All Swift files below are in [`Sources/BasedFTP/`](Sources/BasedFTP/).
 | [test.sh](Scripts/test.sh) | Runs SwiftPM tests. Network integration tests explicitly skip when their servers are not configured. |
 | [integration-test.sh](Scripts/integration-test.sh) | Starts isolated loopback SSH tests and additional key variants. |
 | [ftp-integration-test.sh](Scripts/ftp-integration-test.sh) | Starts isolated pyftpdlib servers; accepts a command for combined FTP/SSH runs. Test-only installation steps are in the README. |
+| [ftps-integration-test.sh](Scripts/ftps-integration-test.sh) | Generates an ephemeral test CA and loopback explicit/implicit TLS servers, including invalid control/data certificates and TLS-refusal cases. |
 | [render-icon.swift](Scripts/render-icon.swift) | Generates the app icon assets. |
 
-Tests live in [`Tests/BasedFTPTests/`](Tests/BasedFTPTests/): `CoreTests` covers protocol/security and SFTP operations; `RemoteFileSystemTests` the shared contract; `TreeTests` navigation/moves; `WorkspaceTests` tabs/bookmarks; `RemoteEditTests` snapshots/automatic editing; `FTPTests` profiles/listing/gates; `FTPTransferTests` transfers/recovery/queue behavior; `FTPFileOperationsTests` recursive operations, link safety, permissions, and panel/drop routing. [`Tests/Fixtures/`](Tests/Fixtures/) holds the real FTP test-server setup and a test-only SFTP reordering/short-read fixture.
+Tests live in [`Tests/BasedFTPTests/`](Tests/BasedFTPTests/): `CoreTests` covers protocol/security and SFTP operations; `RemoteFileSystemTests` the shared contract; `TreeTests` navigation/moves; `WorkspaceTests` tabs/bookmarks; `RemoteEditTests` snapshots/automatic editing; `FTPTests` profiles/listing/gates; `FTPTransferTests` transfers/recovery/queue behavior; `FTPFileOperationsTests` recursive operations, link safety, permissions, and panel/drop routing; `FTPSTests` TLS modes, trust failures, protected data, resume, and queue integration. [`Tests/Fixtures/`](Tests/Fixtures/) holds the real FTP/FTPS test-server setup, ephemeral PKI generator, and a test-only SFTP reordering/short-read fixture.
 
 [`Resources/`](Resources/) holds icons/screenshots. [`docs/index.html`](docs/index.html) and [the Pages workflow](.github/workflows/pages.yml) are the separate static landing page. `.build/` and `build/` contain generated artifacts and are ignored by Git. Consult the validation report for the known local Xcode plugin issue and runtime coverage limits.
