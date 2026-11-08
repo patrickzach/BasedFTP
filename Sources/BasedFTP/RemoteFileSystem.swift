@@ -23,6 +23,8 @@ protocol RemoteFileSystem: AnyObject {
     /// Only a confirmed missing entry returns nil; other failures must throw.
     func entryIfExists(_ path: String) throws -> FileEntry?
     func list(_ path: String) throws -> [FileEntry]
+    /// Requires enough metadata to avoid following links during recursive traversal.
+    func listForRecursion(_ path: String) throws -> [FileEntry]
     func mkdir(_ path: String) throws
     /// Move after checking for conflicts; FTP cannot guarantee atomic no-replace semantics.
     func rename(_ from: String, _ to: String) throws
@@ -39,6 +41,7 @@ protocol RemoteFileSystem: AnyObject {
 }
 
 extension RemoteFileSystem {
+    func listForRecursion(_ path: String) throws -> [FileEntry] { try list(path) }
     func exists(_ path: String) throws -> Bool { try entryIfExists(path) != nil }
     func delete(_ entry: FileEntry) throws { try delete([entry], progress: { _ in }) }
     func delete(_ entries: [FileEntry]) throws { try delete(entries, progress: { _ in }) }
@@ -51,7 +54,7 @@ extension RemoteFileSystem {
 }
 
 /// The only production entry point for creating remote file sessions.
-/// SFTP supports all operations; FTP currently supports browsing and regular file transfers.
+/// SFTP supports all operations; FTP supports browsing, transfers, and file operations; remote editing remains SFTP-only.
 enum RemoteFileSystems {
     static func connect(profile: ServerProfile, control: OperationControl = OperationControl(), knownHosts: URL? = nil) throws -> any RemoteFileSystem {
         switch profile.transport {

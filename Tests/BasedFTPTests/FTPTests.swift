@@ -66,24 +66,19 @@ final class FTPTests: XCTestCase {
         }
         XCTAssertThrowsError(try FTPListing.parse(Data([0xff]), directory: "/"))
     }
-    @MainActor func testFileTransfersEnabledButOtherFTPOperationsStayDisabled() throws {
+    @MainActor func testFileAndFolderCapabilitiesKeepRemoteEditingDisabled() throws {
         let p = profile(), pane = PaneModel(profile: p), workspace = Workspace()
         let tab = ConnectionTab(profile: p); workspace.tabs = [tab]; workspace.selected = tab.id
         let file = FileEntry(name: "file", path: "/file", permissions: 0o100644)
         let folder = FileEntry(name: "folder", path: "/folder", permissions: 0o040755)
-        XCTAssertFalse(pane.supportsMutations); XCTAssertTrue(workspace.supportsTransfers)
-        XCTAssertTrue(workspace.canTransfer([file])); XCTAssertFalse(workspace.canTransfer([file, folder]))
+        XCTAssertTrue(pane.supportsMutations); XCTAssertTrue(workspace.supportsTransfers)
+        XCTAssertTrue(workspace.canTransfer([file])); XCTAssertTrue(workspace.canTransfer([file, folder]))
         XCTAssertFalse(p.transport.supportsRemoteEditing)
-        pane.create(name: "folder", directory: true)
-        XCTAssertEqual(pane.error, ServerProtocol.ftpLimitationsNotice)
-        workspace.transfer(from: pane, entries: [folder])
-        XCTAssertTrue(workspace.queue.jobs.isEmpty)
         let backend = try RemoteFileSystems.connect(profile: p)
         defer { backend.close() }
         XCTAssertTrue(backend is FTPClient)
-        XCTAssertFalse(backend.transferFeatures.directories)
+        XCTAssertTrue(backend.transferFeatures.directories)
         XCTAssertFalse(backend.transferFeatures.unixPermissions)
-        XCTAssertThrowsError(try backend.mkdir("/forbidden"))
         XCTAssertThrowsError(try backend.uploadEditingSnapshot(URL(fileURLWithPath: "/tmp/file"), to: "/file", permissions: 0o644))
     }
     private func integration(pasv: Bool = false, password: String? = nil, control: OperationControl = OperationControl()) throws -> FTPClient {

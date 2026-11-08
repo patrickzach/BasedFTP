@@ -59,7 +59,7 @@ final class FTPTransferTests: XCTestCase {
         XCTAssertEqual(overwrite.fileProgress.transferred, 1)
         XCTAssertEqual(try Data(contentsOf: target), data)
         let remoteEntry = try client.stat(remote)
-        XCTAssertFalse(remoteEntry.permissionsAvailable)
+        XCTAssertTrue(remoteEntry.permissionsAvailable)
         try TransferEngine(client: client, upload: false, policy: .rename).run(source: remoteEntry, destination: result.path) { _, _ in }
         XCTAssertEqual(try Data(contentsOf: result), data)
         let permissions = try FileManager.default.attributesOfItem(atPath: result.path)[.posixPermissions] as? NSNumber
@@ -76,6 +76,8 @@ final class FTPTransferTests: XCTestCase {
         let (client, remoteRoot, _) = try server(); defer { client.close() }
         let root = try local(); defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source"); try Data("replacement".utf8).write(to: source)
+        let logURL = remoteRoot.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("commands-epsv")
+        let previousLogLength = (try? String(contentsOf: logURL, encoding: .utf8).count) ?? 0
         for name in ["commit-denied", "upload-denied/file"] {
             let old = remoteRoot.appendingPathComponent(name); try Data("precious".utf8).write(to: old)
             let checkpoint = TransferCheckpoint()
@@ -86,7 +88,7 @@ final class FTPTransferTests: XCTestCase {
                 XCTAssertEqual(try String(contentsOf: remoteRoot.appendingPathComponent((partial as NSString).lastPathComponent), encoding: .utf8), "replacement")
             }
         }
-        let commands = try String(contentsOf: remoteRoot.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("commands-epsv"), encoding: .utf8)
+        let commands = String(try String(contentsOf: logURL, encoding: .utf8).dropFirst(previousLogLength))
         XCTAssertFalse(commands.components(separatedBy: .newlines).contains("DELE"))
     }
     func testResumeUploadAndDownloadAndRejectOversizedPartials() throws {
@@ -164,12 +166,9 @@ final class FTPTransferTests: XCTestCase {
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { cancel.cancel() }
         XCTAssertThrowsError(try cancel.checkpoint())
     }
-    func testFoldersExclusiveCreationAndAtomicEditorUploadsAreRejected() throws {
-        let (client, remoteRoot, _) = try server(); defer { client.close() }
+    func testExclusiveCreationAndAtomicEditorUploadsAreRejected() throws {
+        let (client, _, _) = try server(); defer { client.close() }
         let root = try local(); defer { try? FileManager.default.removeItem(at: root) }
-        XCTAssertThrowsError(try TransferEngine(client: client, upload: true, policy: .rename).run(source: LocalFiles.entry(root), destination: "/home/new-folder") { _, _ in })
-        XCTAssertFalse(FileManager.default.fileExists(atPath: remoteRoot.appendingPathComponent("new-folder").path))
-        XCTAssertThrowsError(try TransferEngine(client: client, upload: false, policy: .rename).run(source: client.stat("/home/sub folder"), destination: root.appendingPathComponent("folder").path) { _, _ in })
         let source = root.appendingPathComponent("source"); try Data([1]).write(to: source)
         XCTAssertThrowsError(try client.upload(source, to: "/home/exclusive", resume: false, exclusive: true) { _ in })
         XCTAssertThrowsError(try client.commitUpload("/home/stage", to: "/home/target", requireAtomic: true))

@@ -6,8 +6,8 @@ enum ServerProtocol: String, Codable, CaseIterable, Identifiable, Sendable {
     var title: String { self == .sftp ? "SFTP (SSH)" : "FTP (Unencrypted)" }
     var supportsTransfers: Bool { true }
     var supportsRemoteEditing: Bool { self == .sftp }
-    var supportsMutations: Bool { self == .sftp }
-    static let ftpLimitationsNotice = "FTP supports individual file transfers. Other remote file operations, folder transfers, and remote editing are not implemented yet."
+    var supportsMutations: Bool { true }
+    static let ftpLimitationsNotice = "FTP remote editing is not implemented yet. Permission changes require server support for SITE CHMOD."
 }
 
 struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
@@ -77,6 +77,8 @@ struct FileEntry: Identifiable, Hashable, Sendable {
     var modified: Date = .distantPast
     var permissionsAvailable = true
     var sizeAvailable = true
+    // Local/SFTP metadata is lstat-style; FTP sets this only after link verification.
+    var linkInformationAvailable = true
     var isDirectory: Bool { permissions & 0o170000 == 0o040000 }
     var isRegular: Bool { permissions & 0o170000 == 0o100000 }
     var isSymlink: Bool { permissions & 0o170000 == 0o120000 }

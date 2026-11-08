@@ -43,7 +43,7 @@ struct BookmarkActivationGate {
     var supportsTransfers: Bool { tab?.profile.transport.supportsTransfers ?? false }
     func canTransfer(_ entries: [FileEntry]) -> Bool {
         guard let tab, !entries.isEmpty else { return false }
-        return tab.profile.transport == .sftp || entries.allSatisfy(\.isRegular)
+        return tab.profile.transport.supportsTransfers
     }
     var activePane: PaneModel? { activeRemote ? tab?.remote : tab?.local }
     init() {
@@ -70,7 +70,7 @@ struct BookmarkActivationGate {
         guard let tab else { return }
         guard supportsTransfers else { pane.error = ServerProtocol.ftpLimitationsNotice; return }
         let items = entries ?? pane.selected
-        guard canTransfer(items) else { pane.error = "FTP currently transfers individual regular files only. Folder transfers are not implemented yet."; return }
+        guard canTransfer(items) else { pane.error = "Select files or folders to transfer."; return }
         queue.enqueue(items, profile: tab.profile, destination: pane.remote ? tab.local.path : tab.remote.path, upload: !pane.remote)
     }
     func drop(_ strings: [String], to pane: PaneModel, directory: String? = nil) -> Bool {

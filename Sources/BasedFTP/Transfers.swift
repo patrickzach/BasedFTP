@@ -176,12 +176,16 @@ final class TransferEngine {
         return true
     }
     init(client: any RemoteFileSystem, upload: Bool, policy: ConflictPolicy, checkpoint: TransferCheckpoint = TransferCheckpoint(), resumeCheckpoint: Bool = false, retryPolicy: ConflictPolicy = .rename) { self.retryPolicy = retryPolicy; self.client = client; self.upload = upload; self.policy = policy; self.checkpoint = checkpoint; self.resumeCheckpoint = resumeCheckpoint }
-    private func children(_ entry: FileEntry) throws -> [FileEntry] { upload ? try LocalFiles.list(entry.path) : try client.list(entry.path) }
-    private func measure(_ entry: FileEntry) throws -> TransferSize {
+    private func children(_ entry: FileEntry) throws -> [FileEntry] { upload ? try LocalFiles.list(entry.path) : try client.listForRecursion(entry.path) }
+    private func measure(_ entry: FileEntry, nested: Bool = false) throws -> TransferSize {
+        if !upload && (nested || entry.isDirectory) && !entry.linkInformationAvailable {
+            throw FTPError.message("The FTP server did not provide reliable link metadata for recursive transfer: \(entry.path)")
+        }
+        if !upload && entry.isRegular && !entry.sizeAvailable { throw FTPError.message("The server did not report this file's size: \(entry.path)") }
         guard !skipUnsupported(entry) else { return TransferSize() }
         if entry.isDirectory {
             return try children(entry).reduce(TransferSize()) { sum, child in
-                let next = try measure(child)
+                let next = try measure(child, nested: true)
                 return TransferSize(bytes: sum.bytes + next.bytes, files: sum.files + next.files)
             }
         }

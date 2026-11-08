@@ -93,7 +93,7 @@ enum FTPListing {
             let path = FileEntry.join(directory, name)
             guard paths.insert(path).inserted else { throw FTPError.message("Duplicate entry in FTP listing: \(name)") }
             entries.append(FileEntry(name: name, path: path, size: size, permissions: kind | mode, modified: modified,
-                                     permissionsAvailable: facts["unix.mode"] != nil, sizeAvailable: facts["size"] != nil))
+                                     permissionsAvailable: facts["unix.mode"] != nil, sizeAvailable: facts["size"] != nil, linkInformationAvailable: kind == 0o120000))
         }
         return entries
     }
@@ -113,12 +113,13 @@ private final class FTPDiagnostics: @unchecked Sendable {
 /// curl/libcurl owns FTP login, passive data connections, and EPSV/PASV negotiation.
 /// File transfers use the system libcurl API for precise progress and cancellation.
 final class FTPClient: RemoteFileSystem {
-    let transferFeatures = RemoteTransferFeatures(directories: false, unixPermissions: false)
+    let transferFeatures = RemoteTransferFeatures(directories: true, unixPermissions: false)
     private let profile: ServerProfile
     private let control: OperationControl
     private var password: String?
     private var closed = false
     private var loginHome: String?
+    private var commandConnection: FTPCurlConnection?
     private var cached: (path: String, entries: [FileEntry])?
     init(profile: ServerProfile, control: OperationControl = OperationControl(), password: String? = nil) throws {
         try profile.validate()
@@ -130,13 +131,13 @@ final class FTPClient: RemoteFileSystem {
         }
         try control.touch()
     }
-    func close() { closed = true; cached = nil; password = nil }
+    func close() { closed = true; cached = nil; password = nil; commandConnection?.close(); commandConnection = nil }
     deinit { close() }
     static func credentialConfiguration(user: String, password: String) -> Data {
         let value = (user + ":" + password).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return Data(("user = \"" + value + "\"\n").utf8)
     }
-    private func directory(_ target: String) throws -> (path: String, entries: [FileEntry]) {
+    private func directoryRequest(_ target: String, command: String = "MLSD") throws -> (path: String, data: Data) {
         try control.touch()
         guard !closed else { throw FTPError.message("The FTP connection has been closed.") }
         let url = try FTPPaths.url(profile: profile, directory: target)
@@ -148,7 +149,7 @@ final class FTPClient: RemoteFileSystem {
         process.arguments = ["-q", "--config", "-", "--silent", "--show-error", "--globoff", "--path-as-is",
                              "--proto", "=ftp", "--proxy", "", "--noproxy", "*", "--ftp-pasv", "--ftp-skip-pasv-ip",
                              "--ftp-method", "singlecwd", "--connect-timeout", "15", "--max-time", "60",
-                             "--quote", "*OPTS UTF8 ON", "--request", "MLSD", "--url", url,
+                             "--quote", "*OPTS UTF8 ON", "--request", command, "--url", url,
                              "--write-out", "%{stderr}\n" + marker + "%{ftp_entry_path}"]
         process.standardInput = input; process.standardOutput = output; process.standardError = errors
         // Do not inherit proxy settings, curl configuration variables, or application secrets.
@@ -195,7 +196,34 @@ final class FTPClient: RemoteFileSystem {
         let home = String(diagnostics[markerRange.upperBound...])
         let path = try FTPPaths.resolved(target, home: home)
         loginHome = home
-        return (path, try FTPListing.parse(data, directory: path))
+        return (path, data)
+    }
+    private func directory(_ target: String, requireLinkInfo: Bool = false, attempt: Int = 0) throws -> (path: String, entries: [FileEntry]) {
+        let result = try directoryRequest(target)
+        let entries = try FTPListing.parse(result.data, directory: result.path)
+        do {
+            let unix = try directoryRequest(target, command: "LIST -a")
+            guard unix.path == result.path else { throw FTPError.message("The FTP login directory changed between requests.") }
+            let verified = try FTPUnixListing.merge(unix.data, entries: entries, directory: result.path, requireConsistent: requireLinkInfo)
+            return (result.path, verified)
+        } catch {
+            if error is CancellationError { throw error }
+            if requireLinkInfo, error is FTPUnixListing.Failure, attempt < 2 {
+                // Only repeat read-only metadata requests, never mutations.
+                return try directory(target, requireLinkInfo: true, attempt: attempt + 1)
+            }
+            if requireLinkInfo { throw FTPError.message("Recursive FTP operations require consistent Unix LIST link metadata at \(result.path): \(error.localizedDescription)") }
+            // Browsing remains available on MLSD-only servers. Recursion must fail closed.
+            return (result.path, entries)
+        }
+    }
+    func listForRecursion(_ path: String) throws -> [FileEntry] {
+        let canonical = try metadataPath(path)
+        if canonical != "/" {
+            let entry = try stat(canonical)
+            guard entry.isDirectory && entry.linkInformationAvailable else { throw FTPError.message("Recursive FTP traversal requires a verified directory, not a link: \(canonical)") }
+        }
+        return try directory(canonical, requireLinkInfo: true).entries
     }
     func realpath(_ path: String) throws -> String {
         let result = try directory(path); cached = result; return result.path
@@ -221,30 +249,110 @@ final class FTPClient: RemoteFileSystem {
         let canonical = try metadataPath(path)
         if canonical == "/" { return try stat(canonical) }
         // A denied/missing parent listing throws; FTP 550 is never assumed to mean absence.
-        return try list((canonical as NSString).deletingLastPathComponent).first { $0.path == canonical }
+        return try directory((canonical as NSString).deletingLastPathComponent, requireLinkInfo: true).entries.first { $0.path == canonical }
     }
     private func requireOpen() throws {
         try control.checkpoint()
         guard !closed else { throw FTPError.message("The FTP connection has been closed.") }
     }
-    private func unsupported() throws -> Never { throw FTPError.message(ServerProtocol.ftpLimitationsNotice) }
-    func mkdir(_ path: String) throws { try unsupported() }
-    func createFile(_ path: String) throws { try unsupported() }
-    func chmod(_ path: String, mode: UInt32) throws { try unsupported() }
-    func delete(_ entries: [FileEntry], progress: (DeletionProgress) -> Void) throws { try unsupported() }
-    func uploadEditingSnapshot(_ local: URL, to destination: String, permissions: UInt32) throws { try unsupported() }
+    private func commands(_ values: [String], path: String) throws {
+        try requireOpen(); cached = nil
+        if commandConnection == nil { commandConnection = try FTPCurlConnection() }
+        do {
+            try FTPCurl.perform(profile: profile, password: password ?? "", url: FTPPaths.url(profile: profile, directory: "/"), control: control,
+                                commands: values, connection: commandConnection)
+        } catch {
+            if error is CancellationError { throw error }
+            throw FTPError.message("FTP operation failed for \(path): \(error.localizedDescription)")
+        }
+    }
+    private func mutationPath(_ path: String) throws -> String {
+        try requireOpen(); try FTPPaths.validate(path)
+        let absolute = try metadataPath(path)
+        guard absolute != "/" else { throw FTPError.message("The FTP root cannot be modified.") }
+        return absolute
+    }
+    private func verifyAncestors(of path: String) throws {
+        let parts = path.split(separator: "/")
+        for depth in 1..<parts.count {
+            let ancestor = "/" + parts.prefix(depth).joined(separator: "/")
+            let entry = try stat(ancestor)
+            guard entry.isDirectory && entry.linkInformationAvailable else { throw FTPError.message("FTP operations cannot traverse links or unverified directories: \(ancestor)") }
+        }
+    }
+    func mkdir(_ path: String) throws {
+        let target = try mutationPath(path); try verifyAncestors(of: target)
+        guard try entryIfExists(target) == nil else { throw FTPError.message("The destination already exists: \(target)") }
+        try commands(["MKD " + target], path: target)
+    }
+    func createFile(_ path: String) throws {
+        let target = try mutationPath(path); try verifyAncestors(of: target)
+        guard try entryIfExists(target) == nil else { throw FTPError.message("The destination already exists: \(target)") }
+        let temporary = FileEntry.join((target as NSString).deletingLastPathComponent, ".basedftp-new-" + UUID().uuidString + ".partial")
+        // Empty creation is staged too: never send STOR directly to an existing target.
+        try FTPCurl.perform(profile: profile, password: password ?? "", url: FTPPaths.fileURL(profile: profile, path: temporary), control: control,
+                            file: FileHandle.nullDevice, upload: true, size: 0)
+        try renameStaging(temporary, to: target, overwrite: false)
+    }
+    func chmod(_ path: String, mode: UInt32) throws {
+        guard mode <= 0o7777 else { throw FTPError.message("Invalid Unix permissions.") }
+        let target = try mutationPath(path); try verifyAncestors(of: target)
+        let entry = try stat(target)
+        guard entry.linkInformationAvailable && !entry.isSymlink else { throw FTPError.message("Permissions cannot be changed through an FTP symbolic link or unverified entry: \(target)") }
+        do { try commands(["SITE CHMOD " + String(mode, radix: 8) + " " + target], path: target) }
+        catch { if error is CancellationError { throw error }; throw FTPError.message("FTP SITE CHMOD failed for \(target). The server must support this command and grant permission. \(error.localizedDescription)") }
+    }
+    func delete(_ entries: [FileEntry], progress: (DeletionProgress) -> Void) throws {
+        let paths = try entries.map { try mutationPath($0.path) }
+        // Validate every top-level path before issuing the first destructive command.
+        for path in paths { try verifyAncestors(of: path) }
+        let unique = Array(Set(paths)).sorted().filter { path in !paths.contains { path.hasPrefix($0 + "/") } }
+        var removed = 0
+        var visited: Set<String> = []
+        func remove(_ path: String, supplied: FileEntry? = nil, depth: Int = 0) throws {
+            try control.checkpoint()
+            guard depth <= 256, visited.insert(path).inserted else { throw FTPError.message("Unsafe or excessively deep FTP directory tree: \(path)") }
+            let current = try supplied ?? stat(path)
+            if current.isDirectory {
+                guard current.linkInformationAvailable else { throw FTPError.message("Cannot safely recurse without FTP link metadata: \(path)") }
+                progress(DeletionProgress(removed: removed, path: path, listing: true))
+                // Refresh the parent metadata before traversing a previously listed directory.
+                let fresh = try stat(path)
+                if !fresh.isDirectory { try commands(["DELE " + path], path: path) }
+                else {
+                    guard fresh.linkInformationAvailable else { throw FTPError.message("Cannot verify FTP directory type: \(path)") }
+                    for child in try listForRecursion(path) { try remove(child.path, supplied: child, depth: depth + 1) }
+                    try commands(["RMD " + path], path: path)
+                }
+            } else { try commands(["DELE " + path], path: path) }
+            removed += 1
+            progress(DeletionProgress(removed: removed, path: path, listing: false))
+        }
+        for path in unique {
+            do { try remove(path) }
+            catch {
+                if error is CancellationError { throw error }
+                throw FTPError.message("FTP deletion stopped at \(path) after \(removed) confirmed deletions: \(error.localizedDescription)")
+            }
+        }
+    }
+    func uploadEditingSnapshot(_ local: URL, to destination: String, permissions: UInt32) throws { throw FTPError.message(ServerProtocol.ftpLimitationsNotice) }
 
     private func renameStaging(_ from: String, to: String, overwrite: Bool) throws {
         try requireOpen(); try FTPPaths.validate(from); try FTPPaths.validate(to)
-        let source = try metadataPath(from), destination = try metadataPath(to)
+        let source = try mutationPath(from), destination = try mutationPath(to)
+        try verifyAncestors(of: source); try verifyAncestors(of: destination)
         guard source != destination else { throw FTPError.message("FTP staging and destination paths must differ.") }
         cached = nil
-        guard try stat(source).isRegular else { throw FTPError.message("Only regular FTP staging files can be committed.") }
+        let sourceEntry = try stat(source)
+        if overwrite { guard sourceEntry.isRegular else { throw FTPError.message("Only regular FTP staging files can replace a destination.") } }
+        if sourceEntry.isDirectory {
+            guard sourceEntry.linkInformationAvailable, !destination.hasPrefix(source + "/") else { throw FTPError.message("An FTP folder cannot be moved into itself, a subfolder, or through unverified link metadata.") }
+        }
         if let existing = try entryIfExists(destination) {
             guard overwrite && existing.isRegular else { throw FTPError.message("The FTP destination already exists or is not a regular file. The staging file is retained.") }
         }
-        try FTPCurl.perform(profile: profile, password: password ?? "", url: FTPPaths.url(profile: profile, directory: "/"), control: control,
-                            commands: ["RNFR " + source, "RNTO " + destination])
+        try commands(["RNFR " + source, "RNTO " + destination], path: source + " → " + destination)
     }
     // FTP has no portable atomic no-replace primitive. Check first; never issue DELE.
     func rename(_ from: String, _ to: String) throws { try renameStaging(from, to: to, overwrite: false) }

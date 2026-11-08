@@ -59,20 +59,40 @@ private let ftpCurlProgress: curl_xferinfo_callback = { opaque, _, received, _, 
     } catch { context.error = error; return 1 }
 }
 
+/// Serial command requests reuse a control connection instead of reauthenticating per deletion.
+final class FTPCurlConnection {
+    fileprivate var handle: UnsafeMutableRawPointer?
+    init() throws { handle = try FTPCurl.makeHandle() }
+    func close() { if let handle { curl_easy_cleanup(handle); self.handle = nil } }
+    deinit { close() }
+}
+
 /// Synchronous system-libcurl requests, confined to the caller's worker task.
 /// Callbacks and their Swift context live only for the duration of easy_perform.
 enum FTPCurl {
     private static let initialization = curl_global_init(Int(CURL_GLOBAL_DEFAULT))
+    fileprivate static func makeHandle() throws -> UnsafeMutableRawPointer {
+        guard initialization == CURLE_OK, let handle = curl_easy_init() else { throw FTPError.message("Could not initialize the system FTP transport.") }
+        return handle
+    }
     private static func check(_ result: CURLcode) throws {
         guard result == CURLE_OK else { throw FTPError.message("Could not configure the FTP transport (libcurl \(result.rawValue)).") }
     }
     static func perform(profile: ServerProfile, password: String, url: String, control: OperationControl,
                         file: FileHandle? = nil, upload: Bool = false, offset: UInt64 = 0, size: UInt64 = 0,
-                        commands: [String] = [], progress: (UInt64) -> Void = { _ in }) throws {
+                        commands: [String] = [], connection: FTPCurlConnection? = nil, progress: (UInt64) -> Void = { _ in }) throws {
         try control.checkpoint(); try profile.validate()
-        guard initialization == CURLE_OK, let handle = curl_easy_init() else { throw FTPError.message("Could not initialize the system FTP transport.") }
+        let handle: UnsafeMutableRawPointer
+        if let connection {
+            guard let live = connection.handle else { throw FTPError.message("The FTP command connection is closed.") }
+            handle = live; curl_easy_reset(handle)
+        } else { handle = try makeHandle() }
+        func releaseRequest() {
+            // reset clears Swift callback pointers but keeps reusable live connections.
+            if connection != nil { curl_easy_reset(handle) } else { curl_easy_cleanup(handle) }
+        }
         var needsCleanup = true
-        defer { if needsCleanup { curl_easy_cleanup(handle) } }
+        defer { if needsCleanup { releaseRequest() } }
         guard size <= UInt64(Int64.max), offset <= size else { throw FTPError.message("Invalid FTP transfer size or resume offset.") }
         try check(bftp_string(handle, CURLOPT_URL, url))
         try check(bftp_string(handle, CURLOPT_USERNAME, profile.user))
@@ -109,7 +129,7 @@ enum FTPCurl {
             // libcurl may invoke callbacks while closing an FTP connection. Keep
             // their Swift context and nonescaping progress closure alive through cleanup.
             defer {
-                withExtendedLifetime(context) { curl_easy_cleanup(handle) }
+                withExtendedLifetime(context) { releaseRequest() }
                 needsCleanup = false
             }
             let pointer = Unmanaged.passUnretained(context).toOpaque()

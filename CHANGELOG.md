@@ -10,6 +10,12 @@ All features and improvements implemented in BasedFTP so far. The initial commit
 
 ### Added
 
+- FTP folder/file creation, renaming, moving, recursive deletion with acknowledged progress, and manual SITE CHMOD on supporting servers.
+- Recursive FTP folder uploads/downloads, empty directories, existing drag/drop integration, and link/special-file skipping with warnings.
+- Conservative Unix LIST metadata verification alongside MLSD, including broken-link detection, permission display, root/self-move/link-ancestor protection, and explicit refusal when recursion cannot be verified safely.
+- Reusable FTP command connections for sequential deletion and other mutations; limited retries of inconsistent read-only metadata snapshots.
+- Real-server file-operation tests for EPSV/PASV, recursive transfers/deletion, errors/cancellation, server capability limits, parallel folders, and native panel/drop routing.
+
 - Compact developer guide covering source files, key functions, common execution paths, extension points, and build/test tooling.
 
 - FTP upload/download of individual regular files through the shared parallel transfer queue, with byte/file progress, speed/ETA, pause, cancellation, retry, and explicit upload/download resumption.

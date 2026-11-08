@@ -20,9 +20,9 @@ for name in ("sub folder", "empty", "denied", "no-mlsd", "slow", "upload-denied"
 (home / ".hidden").write_text("hidden", encoding="utf-8")
 (home / "sub folder" / "nested.txt").write_text("nested", encoding="utf-8")
 authorizer = DummyAuthorizer()
-authorizer.add_user("ftp-user", os.environ["BASEDFTP_FTP_TEST_PASSWORD"], str(filesystem), perm="elradfw")
+authorizer.add_user("ftp-user", os.environ["BASEDFTP_FTP_TEST_PASSWORD"], str(filesystem), perm="elradfmwM")
 
-authorizer.add_user("ftp-queue", "", str(filesystem), perm="elradfw")
+authorizer.add_user("ftp-queue", "", str(filesystem), perm="elradfmwM")
 class TestDataHandler(ThrottledDTPHandler):
     read_limit = 512 * 1024
     write_limit = 512 * 1024
@@ -48,6 +48,10 @@ class Handler(FTPHandler):
             super().ftp_RNTO(path)
 
     auth_failed_timeout = 0
+    next_connection_id = 0
+    def on_connect(self):
+        Handler.next_connection_id += 1
+        self.connection_id = Handler.next_connection_id
     def on_login(self, username):
         self.fs.cwd = "/home"
     def ftp_EPSV(self, line):
@@ -55,6 +59,21 @@ class Handler(FTPHandler):
             self.respond("502 EPSV disabled for PASV fallback test")
         else:
             super().ftp_EPSV(line)
+    def ftp_LIST(self, path):
+        if Path(path).name == "mlsd-only":
+            self.respond("502 Unix LIST unavailable for test")
+        else:
+            super().ftp_LIST(path)
+    def ftp_SITE_CHMOD(self, path, mode):
+        if Path(path).name == "chmod-denied":
+            self.respond("502 SITE CHMOD unavailable for test")
+        else:
+            super().ftp_SITE_CHMOD(path, mode)
+    def ftp_DELE(self, path):
+        if Path(path).name == "delete-denied":
+            self.respond("550 Delete denied for test")
+        else:
+            super().ftp_DELE(path)
     def ftp_MLSD(self, path):
         name = Path(path).name
         if name == "denied":
@@ -70,6 +89,9 @@ class Handler(FTPHandler):
         # Record command names only, never credentials or request arguments.
         with (root / ("commands-" + mode)).open("a") as file:
             file.write(cmd + "\n")
+        if cmd in ("MKD", "RNFR", "RNTO", "DELE", "RMD"):
+            with (root / ("command-connections-" + mode)).open("a") as file:
+                file.write(str(self.connection_id) + " " + cmd + "\n")
 
 Handler.authorizer = authorizer
 # A bogus advertised PASV address proves clients use the control peer instead.
